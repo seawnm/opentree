@@ -54,6 +54,7 @@
 3. 用 `opentree init` 替代手動 CLAUDE.md 維護
 4. 驗證 E2E Slack 互動流程
 
-## 前一個 thread
+## Thread 連結
 
-ts: 1774750263.610469, channel: C0AK78CNYBU
+- 前一個 thread（Phase 1-6 設計+實作）：ts: 1774750263.610469, channel: C0AK78CNYBU
+- 下一個 thread（Phase 7+ 接續）：ts: 1774800803.111649, channel: C0AK78CNYBU
