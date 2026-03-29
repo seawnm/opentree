@@ -6,11 +6,14 @@ Mock module directories contain actual .md rule files.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 import pytest
 
+from opentree.core.config import UserConfig
+from opentree.core.placeholders import PlaceholderEngine
 from opentree.generator.symlinks import LinkResult, SymlinkManager
 
 
@@ -349,3 +352,195 @@ def test_remove_empty_module(tmp_path: Path) -> None:
 
     # Should not raise
     mgr.remove_module_links("nonexistent", link_method="symlink")
+
+
+# ---------------------------------------------------------------------------
+# PlaceholderEngine integration tests
+# ---------------------------------------------------------------------------
+
+
+def _make_engine(
+    bot_name: str = "TestBot", team_name: str = "TestTeam"
+) -> PlaceholderEngine:
+    """Create a PlaceholderEngine with test values."""
+    config = UserConfig(bot_name=bot_name, team_name=team_name)
+    return PlaceholderEngine(config)
+
+
+def _create_module_rules_with_content(
+    home: Path,
+    module_name: str,
+    files: dict[str, str],
+) -> Path:
+    """Create a module with specific file contents."""
+    rules_dir = home / "modules" / module_name / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    for fname, content in files.items():
+        (rules_dir / fname).write_text(content, encoding="utf-8")
+    return rules_dir
+
+
+# ---------------------------------------------------------------------------
+# 15. test_create_with_resolution_placeholder_file
+# ---------------------------------------------------------------------------
+
+
+def test_create_with_resolution_placeholder_file(tmp_path: Path) -> None:
+    """File with {{bot_name}} placeholder is resolved as resolved_copy."""
+    home = _setup_opentree_home(tmp_path)
+    _create_module_rules_with_content(
+        home, "core", {"identity.md": "# {{bot_name}} Identity\nI am {{bot_name}}."}
+    )
+
+    mgr = SymlinkManager(home)
+    engine = _make_engine(bot_name="DOGI")
+    results = mgr.create_module_links_with_resolution(
+        "core", ["identity.md"], engine
+    )
+
+    assert len(results) == 1
+    assert results[0].method == "resolved_copy"
+    assert results[0].success is True
+
+
+# ---------------------------------------------------------------------------
+# 16. test_create_with_resolution_plain_file
+# ---------------------------------------------------------------------------
+
+
+def test_create_with_resolution_plain_file(tmp_path: Path) -> None:
+    """File without placeholders uses symlink (fallback chain)."""
+    home = _setup_opentree_home(tmp_path)
+    _create_module_rules_with_content(
+        home, "core", {"routing.md": "# Routing\nPlain content."}
+    )
+
+    mgr = SymlinkManager(home)
+    engine = _make_engine()
+    results = mgr.create_module_links_with_resolution(
+        "core", ["routing.md"], engine
+    )
+
+    assert len(results) == 1
+    # Should use symlink or copy (not resolved_copy)
+    assert results[0].method != "resolved_copy"
+    assert results[0].success is True
+
+
+# ---------------------------------------------------------------------------
+# 17. test_create_with_resolution_mixed
+# ---------------------------------------------------------------------------
+
+
+def test_create_with_resolution_mixed(tmp_path: Path) -> None:
+    """Module with both placeholder and plain files uses mixed methods."""
+    home = _setup_opentree_home(tmp_path)
+    _create_module_rules_with_content(
+        home,
+        "core",
+        {
+            "identity.md": "# {{bot_name}} Identity",
+            "routing.md": "# Routing\nPlain content.",
+        },
+    )
+
+    mgr = SymlinkManager(home)
+    engine = _make_engine(bot_name="DOGI")
+    results = mgr.create_module_links_with_resolution(
+        "core", ["identity.md", "routing.md"], engine
+    )
+
+    assert len(results) == 2
+    methods = {r.method for r in results}
+    assert "resolved_copy" in methods
+    # The other file should be symlink or copy
+    assert len(methods) == 2  # mixed methods
+
+
+# ---------------------------------------------------------------------------
+# 18. test_resolved_copy_content_correct
+# ---------------------------------------------------------------------------
+
+
+def test_resolved_copy_content_correct(tmp_path: Path) -> None:
+    """Resolved copy target file has actual values, not {{placeholders}}."""
+    home = _setup_opentree_home(tmp_path)
+    _create_module_rules_with_content(
+        home, "core", {"identity.md": "Hello {{bot_name}}, team {{team_name}}."}
+    )
+
+    mgr = SymlinkManager(home)
+    engine = _make_engine(bot_name="DOGI", team_name="AlphaTeam")
+    results = mgr.create_module_links_with_resolution(
+        "core", ["identity.md"], engine
+    )
+
+    target = Path(results[0].target)
+    content = target.read_text(encoding="utf-8")
+    assert "DOGI" in content
+    assert "AlphaTeam" in content
+    assert "{{bot_name}}" not in content
+    assert "{{team_name}}" not in content
+
+
+# ---------------------------------------------------------------------------
+# 19. test_resolved_copy_creates_dirs
+# ---------------------------------------------------------------------------
+
+
+def test_resolved_copy_creates_dirs(tmp_path: Path) -> None:
+    """Target directory is auto-created when using resolved_copy."""
+    home = _setup_opentree_home(tmp_path)
+    _create_module_rules_with_content(
+        home, "guardrail", {"safety.md": "# {{bot_name}} Safety"}
+    )
+
+    # Remove the target directory if it exists
+    target_dir = home / "workspace" / ".claude" / "rules" / "guardrail"
+    assert not target_dir.exists()
+
+    mgr = SymlinkManager(home)
+    engine = _make_engine(bot_name="DOGI")
+    results = mgr.create_module_links_with_resolution(
+        "guardrail", ["safety.md"], engine
+    )
+
+    assert results[0].success is True
+    assert target_dir.is_dir()
+    assert (target_dir / "safety.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# 20. test_create_with_resolution_missing_source
+# ---------------------------------------------------------------------------
+
+
+def test_create_with_resolution_missing_source(tmp_path: Path) -> None:
+    """Raises FileNotFoundError when a source rule file does not exist."""
+    home = _setup_opentree_home(tmp_path)
+    # Create module dir but no rule files
+    (home / "modules" / "core" / "rules").mkdir(parents=True)
+
+    mgr = SymlinkManager(home)
+    engine = _make_engine()
+    with pytest.raises(FileNotFoundError, match="identity.md"):
+        mgr.create_module_links_with_resolution(
+            "core", ["identity.md"], engine
+        )
+
+
+# ---------------------------------------------------------------------------
+# 21. test_create_with_resolution_invalid_name
+# ---------------------------------------------------------------------------
+
+
+def test_create_with_resolution_invalid_name(tmp_path: Path) -> None:
+    """Raises ValueError for invalid module names."""
+    home = _setup_opentree_home(tmp_path)
+    mgr = SymlinkManager(home)
+    engine = _make_engine()
+
+    with pytest.raises(ValueError, match="Invalid module name"):
+        mgr.create_module_links_with_resolution(
+            "../evil", ["something.md"], engine
+        )

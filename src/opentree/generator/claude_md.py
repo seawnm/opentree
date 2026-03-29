@@ -192,15 +192,10 @@ class ClaudeMdGenerator:
     def _substitute_placeholders(self, content: str, config: UserConfig) -> str:
         """Replace ``{{...}}`` placeholders with actual values.
 
-        Uses ``str.replace()`` (not ``re.sub``) to avoid backslash
-        interpretation issues with Windows paths.
+        Delegates to ``PlaceholderEngine`` for consistent resolution
+        across the entire codebase.
         """
-        replacements = {
-            "{{bot_name}}": config.bot_name or "OpenTree",
-            "{{team_name}}": config.team_name,
-            "{{admin_channel}}": config.admin_channel,
-            "{{opentree_home}}": config.opentree_home.replace("\\", "/"),
-        }
-        for placeholder, value in replacements.items():
-            content = content.replace(placeholder, value)
-        return content
+        from opentree.core.placeholders import PlaceholderEngine
+
+        engine = PlaceholderEngine(config)
+        return engine.resolve_content(content)

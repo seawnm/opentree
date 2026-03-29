@@ -524,3 +524,208 @@ class TestRefreshStalePermissions:
         # Verify core and slack permissions still exist
         assert "core" in perms["modules"]
         assert "slack" in perms["modules"]
+
+
+# ------------------------------------------------------------------
+# Placeholder integration tests
+# ------------------------------------------------------------------
+
+
+def _placeholder_manifest() -> dict[str, Any]:
+    """A manifest with required and optional placeholders."""
+    return {
+        "name": "greeter",
+        "version": "1.0.0",
+        "description": "Greeting module with placeholders",
+        "type": "optional",
+        "depends_on": ["core"],
+        "conflicts_with": [],
+        "loading": {"rules": ["greeting.md", "plain.md"]},
+        "triggers": {
+            "keywords": ["greet"],
+            "description": "Greeting rules",
+        },
+        "permissions": {"allow": [], "deny": []},
+        "placeholders": {
+            "bot_name": "required",
+            "team_name": "optional",
+        },
+    }
+
+
+def _missing_placeholder_manifest() -> dict[str, Any]:
+    """A manifest requiring a placeholder that has no value in config."""
+    return {
+        "name": "strict",
+        "version": "1.0.0",
+        "description": "Strict module requiring admin_channel",
+        "type": "optional",
+        "depends_on": ["core"],
+        "conflicts_with": [],
+        "loading": {"rules": ["notify.md"]},
+        "triggers": {
+            "keywords": ["notify"],
+            "description": "Notification rules",
+        },
+        "permissions": {"allow": [], "deny": []},
+        "placeholders": {
+            "admin_description": "required",
+        },
+    }
+
+
+def _setup_placeholder_modules(home: Path) -> None:
+    """Create greeter and strict modules with rule files."""
+    # greeter module — one file with placeholders, one plain
+    greeter_dir = home / "modules" / "greeter"
+    _write_manifest(greeter_dir, _placeholder_manifest())
+    rules_dir = greeter_dir / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    (rules_dir / "greeting.md").write_text(
+        "# Hello from {{bot_name}}\nTeam: {{team_name}}\n",
+        encoding="utf-8",
+    )
+    (rules_dir / "plain.md").write_text(
+        "# Plain rules\nNo placeholders here.\n",
+        encoding="utf-8",
+    )
+
+    # strict module — requires admin_description which is empty in fixture
+    strict_dir = home / "modules" / "strict"
+    _write_manifest(strict_dir, _missing_placeholder_manifest())
+    strict_rules = strict_dir / "rules"
+    strict_rules.mkdir(parents=True, exist_ok=True)
+    (strict_rules / "notify.md").write_text(
+        "# {{admin_description}} Notifications\n",
+        encoding="utf-8",
+    )
+
+
+class TestPlaceholderIntegration:
+    """Placeholder resolution in install and refresh."""
+
+    def test_install_validates_required_placeholder(
+        self, opentree_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Install fails when a required placeholder has no value."""
+        monkeypatch.setenv("OPENTREE_HOME", str(opentree_home))
+
+        # admin_description is empty in user.json fixture
+        _setup_placeholder_modules(opentree_home)
+
+        result = runner.invoke(app, ["module", "install", "strict"])
+
+        assert result.exit_code == 1
+        assert "Placeholder validation failed" in result.output
+        assert "admin_description" in result.output
+
+    def test_install_with_placeholder_creates_resolved_copy(
+        self, opentree_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Install resolves placeholders: resolved files are copies, plain files are links."""
+        monkeypatch.setenv("OPENTREE_HOME", str(opentree_home))
+        _setup_placeholder_modules(opentree_home)
+
+        result = runner.invoke(app, ["module", "install", "greeter"])
+        assert result.exit_code == 0, result.output
+
+        # Verify the resolved file has actual values
+        greeting_path = (
+            opentree_home / "workspace" / ".claude" / "rules" / "greeter" / "greeting.md"
+        )
+        assert greeting_path.exists()
+        content = greeting_path.read_text(encoding="utf-8")
+        assert "TestBot" in content
+        assert "TestTeam" in content
+        assert "{{bot_name}}" not in content
+
+        # Verify registry stores resolved_copy as link_method
+        reg = json.loads(
+            (opentree_home / "config" / "registry.json").read_text(encoding="utf-8")
+        )
+        assert reg["modules"]["greeter"]["link_method"] == "resolved_copy"
+
+    def test_refresh_resolves_placeholders(
+        self, opentree_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Refresh re-resolves all placeholder files."""
+        monkeypatch.setenv("OPENTREE_HOME", str(opentree_home))
+        _setup_placeholder_modules(opentree_home)
+
+        # Install first
+        result = runner.invoke(app, ["module", "install", "greeter"])
+        assert result.exit_code == 0, result.output
+
+        # Change user config to new bot_name
+        user_config = {
+            "bot_name": "NewBot",
+            "team_name": "NewTeam",
+            "admin_channel": "C123",
+        }
+        (opentree_home / "config" / "user.json").write_text(
+            json.dumps(user_config), encoding="utf-8"
+        )
+
+        # Refresh
+        result = runner.invoke(app, ["module", "refresh"])
+        assert result.exit_code == 0, result.output
+
+        # Verify content updated with new values
+        greeting_path = (
+            opentree_home / "workspace" / ".claude" / "rules" / "greeter" / "greeting.md"
+        )
+        content = greeting_path.read_text(encoding="utf-8")
+        assert "NewBot" in content
+        assert "NewTeam" in content
+        assert "TestBot" not in content
+
+    def test_install_optional_placeholder_missing_ok(
+        self, opentree_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Optional placeholders with empty values do not block install."""
+        monkeypatch.setenv("OPENTREE_HOME", str(opentree_home))
+
+        # Create a module where team_name is optional and admin_channel is optional
+        manifest = {
+            "name": "optional-test",
+            "version": "1.0.0",
+            "description": "Module with optional placeholder",
+            "type": "optional",
+            "depends_on": ["core"],
+            "conflicts_with": [],
+            "loading": {"rules": ["info.md"]},
+            "triggers": {
+                "keywords": ["info"],
+                "description": "Info rules",
+            },
+            "permissions": {"allow": [], "deny": []},
+            "placeholders": {
+                "bot_name": "required",
+                "admin_description": "optional",
+            },
+        }
+        mod_dir = opentree_home / "modules" / "optional-test"
+        _write_manifest(mod_dir, manifest)
+        rules_dir = mod_dir / "rules"
+        rules_dir.mkdir(parents=True, exist_ok=True)
+        (rules_dir / "info.md").write_text(
+            "Bot: {{bot_name}}, Admin: {{admin_description}}\n",
+            encoding="utf-8",
+        )
+
+        # admin_description is empty in user.json but it's optional
+        result = runner.invoke(app, ["module", "install", "optional-test"])
+        assert result.exit_code == 0, result.output
+
+        # Verify file exists with bot_name resolved and admin_description as empty
+        info_path = (
+            opentree_home
+            / "workspace"
+            / ".claude"
+            / "rules"
+            / "optional-test"
+            / "info.md"
+        )
+        content = info_path.read_text(encoding="utf-8")
+        assert "TestBot" in content
+        assert "{{bot_name}}" not in content

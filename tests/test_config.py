@@ -34,6 +34,7 @@ class TestLoadConfigFromFile:
         assert result.team_name == "DOGI Team"
         assert result.admin_channel == "C012345"
         assert result.opentree_home == str(tmp_path)
+        assert result.admin_description == ""
 
 
 class TestLoadConfigMissingFile:
@@ -138,3 +139,45 @@ class TestOpentreeHomeAlwaysSet:
         result = load_user_config(tmp_path)
 
         assert result.opentree_home == str(tmp_path)
+
+
+class TestAdminDescriptionDefault:
+    """test_admin_description_default_empty -- default is empty string."""
+
+    def test_default_empty(self) -> None:
+        config = UserConfig()
+        assert config.admin_description == ""
+
+
+class TestAdminDescriptionFromJson:
+    """test_admin_description_from_json -- loaded from user.json."""
+
+    def test_from_json(self, tmp_path: Path) -> None:
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "user.json"
+        config_file.write_text(
+            json.dumps({"admin_description": "The team admin"}),
+            encoding="utf-8",
+        )
+
+        result = load_user_config(tmp_path)
+
+        assert result.admin_description == "The team admin"
+
+
+class TestAdminDescriptionMissingUsesDefault:
+    """test_admin_description_missing_uses_default -- missing field defaults to empty."""
+
+    def test_missing_uses_default(self, tmp_path: Path) -> None:
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "user.json"
+        config_file.write_text(
+            json.dumps({"bot_name": "TestBot"}),
+            encoding="utf-8",
+        )
+
+        result = load_user_config(tmp_path)
+
+        assert result.admin_description == ""

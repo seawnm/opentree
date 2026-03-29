@@ -16,7 +16,10 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
+
+if TYPE_CHECKING:
+    from opentree.core.placeholders import PlaceholderEngine
 
 
 @dataclass(frozen=True)
@@ -95,6 +98,66 @@ class SymlinkManager:
                 result = self._try_copy(absolute_source, tgt)
 
             results.append(result)
+
+        return tuple(results)
+
+    def create_module_links_with_resolution(
+        self,
+        module_name: str,
+        rules: Sequence[str],
+        engine: "PlaceholderEngine",
+    ) -> tuple[LinkResult, ...]:
+        """Create links with per-file placeholder resolution.
+
+        For each rule:
+        - Read content from source.
+        - If has placeholders: resolve and write copy (method="resolved_copy").
+        - If no placeholders: symlink (existing fallback chain).
+
+        Returns:
+            Tuple of LinkResult for each rule file.
+
+        Raises:
+            FileNotFoundError: If a source rule file does not exist.
+            ValueError: If module_name contains invalid characters.
+        """
+        if not re.match(r'^[a-z]([a-z0-9-]*[a-z0-9])?$', module_name):
+            raise ValueError(f"Invalid module name: {module_name}")
+
+        source_dir = self._home / "modules" / module_name / "rules"
+        target_dir = self._rules_dir / module_name
+
+        # Validate all source files exist first
+        sources: list[Path] = []
+        for rule in rules:
+            source = source_dir / rule
+            if not source.is_file():
+                raise FileNotFoundError(f"Rule file not found: {source}")
+            sources.append(source)
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        results: list[LinkResult] = []
+
+        for source, rule in zip(sources, rules):
+            target = target_dir / rule
+            content = source.read_text(encoding="utf-8")
+
+            if engine.has_placeholders(content):
+                # Resolve placeholders and write copy
+                engine.resolve_file(source, target)
+                results.append(
+                    LinkResult(
+                        source=str(source),
+                        target=str(target),
+                        method="resolved_copy",
+                        success=True,
+                    )
+                )
+            else:
+                # Use existing symlink fallback chain
+                absolute_source = source.resolve()
+                result = self._create_link(absolute_source, target)
+                results.append(result)
 
         return tuple(results)
 

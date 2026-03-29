@@ -16,6 +16,7 @@ from typing import Annotated, Optional
 import typer
 
 from opentree.core.config import load_user_config
+from opentree.core.placeholders import PlaceholderEngine
 from opentree.generator.claude_md import ClaudeMdGenerator
 from opentree.generator.settings import SettingsGenerator
 from opentree.generator.symlinks import SymlinkManager
@@ -159,11 +160,34 @@ def install(
             symlink_mgr = SymlinkManager(home)
             settings_gen = SettingsGenerator(home)
 
+            # Validate placeholders before creating links
+            config = load_user_config(home)
+            engine = PlaceholderEngine(config)
+            placeholder_errors = engine.validate_module_placeholders(
+                manifest.get("placeholders", {})
+            )
+            if placeholder_errors:
+                typer.echo(
+                    f"Error: Placeholder validation failed for '{module_name}':",
+                    err=True,
+                )
+                for err_msg in placeholder_errors:
+                    typer.echo(f"  - {err_msg}", err=True)
+                raise typer.Exit(code=1)
+
             try:
-                # Create symlinks
+                # Create symlinks (with placeholder resolution)
                 rules = manifest.get("loading", {}).get("rules", [])
-                link_results = symlink_mgr.create_module_links(module_name, rules)
-                link_method = link_results[0].method if link_results else "symlink"
+                link_results = symlink_mgr.create_module_links_with_resolution(
+                    module_name, rules, engine
+                )
+                # Determine link_method: "resolved_copy" if any file was resolved
+                if any(r.method == "resolved_copy" for r in link_results):
+                    link_method = "resolved_copy"
+                elif link_results:
+                    link_method = link_results[0].method
+                else:
+                    link_method = "symlink"
 
                 # Add permissions
                 permissions = manifest.get("permissions", {})
@@ -328,8 +352,13 @@ def refresh() -> None:
                 return
 
             try:
+                # Load config + engine for placeholder resolution
+                config = load_user_config(home)
+                engine = PlaceholderEngine(config)
+
                 # Collect rules for each module from manifests
                 module_rules: dict[str, list[str]] = {}
+                module_manifests: dict[str, dict] = {}
                 for name, _entry in data.modules:
                     manifest_path = home / "modules" / name / "opentree.json"
                     if manifest_path.is_file():
@@ -337,12 +366,31 @@ def refresh() -> None:
                             manifest_path.read_text(encoding="utf-8")
                         )
                         module_rules[name] = manifest.get("loading", {}).get("rules", [])
+                        module_manifests[name] = manifest
                     else:
                         module_rules[name] = []
 
-                # Reconcile symlinks
+                # Reconcile: teardown stale dirs, then rebuild with resolution
                 symlink_mgr = SymlinkManager(home)
-                symlink_mgr.reconcile_all(module_rules)
+
+                # Remove stale module directories
+                rules_dir = home / "workspace" / ".claude" / "rules"
+                if rules_dir.exists():
+                    for child in rules_dir.iterdir():
+                        if child.is_dir() and child.name not in module_rules:
+                            if child.name == ".trash":
+                                continue
+                            symlink_mgr.remove_module_links(child.name)
+
+                # Remove + rebuild each module with resolution
+                for name in module_rules:
+                    target_dir = rules_dir / name
+                    if target_dir.exists():
+                        symlink_mgr.remove_module_links(name)
+                    if module_rules[name]:
+                        symlink_mgr.create_module_links_with_resolution(
+                            name, module_rules[name], engine
+                        )
 
                 # Regenerate permissions from scratch (clear stale entries first)
                 settings_gen = SettingsGenerator(home)
