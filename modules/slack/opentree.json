@@ -30,7 +30,6 @@
   },
   "prompt_hook": "prompt_hook.py",
   "placeholders": {
-    "opentree_home": "auto",
-    "admin_channel": "required"
+    "opentree_home": "auto"
   }
 }

@@ -131,7 +131,7 @@ class PlaceholderEngine:
         for name, mode in manifest_placeholders.items():
             placeholder = f"{{{{{name}}}}}"
             value = self._replacements.get(placeholder, "")
-            if mode == "required" and not value:
+            if mode == "required" and not value.strip():
                 errors.append(
                     f"Required placeholder '{name}' has no value in config"
                 )
