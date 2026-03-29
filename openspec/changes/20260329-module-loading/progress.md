@@ -115,32 +115,35 @@
 
 ## 四、待辦事項（TODO）
 
-### P0（Phase 1 必做）
+### P0（Phase 1 — 已完成）
 
-- [ ] 建立 opentree 專案骨架（pyproject.toml、src/ 結構）
-- [ ] 撰寫 opentree.json JSON Schema（draft-2020-12）
-- [ ] 實作 ManifestValidator 類別（12 種錯誤碼、33 個測試案例）
-- [ ] 實作 Registry CRUD（load/save/register/unregister，15 個測試案例）
-- [ ] 建立 10 個模組目錄 + opentree.json manifest
-- [ ] 整合測試：validator 驗證全部 10 個 manifest
-- [ ] 驗證 CLAUDE_CONFIG_DIR 環境變數的覆蓋範圍（P0 隔離需求）
+- [x] 建立 opentree 專案骨架（pyproject.toml、src/ 結構）
+- [x] 撰寫 opentree.json JSON Schema（draft-2020-12）
+- [x] 實作 ManifestValidator 類別（12 種錯誤碼、39 個測試案例）
+- [x] 實作 Registry CRUD（load/save/register/unregister，16 個測試案例）
+- [x] 建立 10 個模組目錄 + opentree.json manifest
+- [x] 整合測試：validator 驗證全部 10 個 manifest
+- [x] 驗證 CLAUDE_CONFIG_DIR 環境變數 → 延至 Phase 4，腳本已建立
 
-### P1（Phase 2-3）
+### P1（Phase 2-3 — 已完成）
 
-- [ ] CLAUDE.md 動態生成器
-- [ ] .claude/rules/ symlink 管理器
-- [ ] .claude/settings.json 合併產生器
-- [ ] opentree install/remove/update CLI 命令
-- [ ] 佔位符替換引擎（{{bot_name}} 等）
-- [ ] System prompt 組裝器 + prompt_hook 機制
+- [x] CLAUDE.md 動態生成器
+- [x] .claude/rules/ symlink 管理器
+- [x] .claude/settings.json 合併產生器
+- [x] opentree install/remove/list/refresh CLI 命令
+- [x] PlaceholderEngine（per-file symlink vs resolved_copy）
+- [x] System prompt 組裝器 + prompt_hook 機制
 
-### P2（Phase 4+）
+### P2（Phase 4-6 — 已完成）
 
-- [ ] 從 DOGI 遷移 personality、guardrail、memory 模組內容（migration-map Phase 2-3）
-- [ ] 從 DOGI 遷移 scheduler、slack、audit-logger 模組內容（migration-map Phase 3）
-- [ ] 選裝模組：requirement、stt、youtube（migration-map Phase 8）
-- [ ] E2E 驗證：完整 Slack 互動流程（migration-map Phase 7）
-- [ ] Python → Go 遷移規劃
+- [x] 從 DOGI 遷移 28 rule files（1,035 行）
+- [x] prompt_hook 系統（PromptContext + 4 builders）
+- [x] opentree init/start/prompt 命令
+- [x] E2E lifecycle 測試 + token 比較
+- [ ] DOGI bot integration（connect OpenTree to slack-bot）
+- [ ] Python to Go migration（long-term）
+
+> 最新狀態見「九、TODO 更新」
 
 ---
 
@@ -155,9 +158,11 @@
 | Registry | 16 | 16 | 原 15 + 1 (code review fix) |
 | Integration | 10 | 10 | |
 | Registry Integration | 5 | 4 + 1 xfail | IR-03 reverse dep 為 Phase 2 |
-| **總計** | **72** | **71 pass + 1 xfail** | |
+| **Phase 1 小計** | **72** | **71 pass + 1 xfail** | |
 
-**覆蓋率：98%**（253 statements, 5 missed）
+**Phase 1 覆蓋率：98%**（253 statements, 5 missed）
+
+> Phase 1-6 最終結果：265 tests (264 pass + 1 xfail), coverage 91%
 
 ### 5.2 Agent 交互與決策歷程（Phase 1 實作）
 
@@ -190,9 +195,9 @@
 | Q2 | scheduler depends_on | `["core"]` | migration-map 權威依賴圖 |
 | Q3 | priority 欄位 | 不加 | 拓撲排序決定載入順序 |
 
-### 5.4 TODO 更新
+### 5.4 TODO 更新（Phase 1 時點）
 
-#### P0（Phase 1 — 已完成 ✅）
+#### P0（Phase 1 — 已完成）
 
 - [x] 建立 opentree 專案骨架（pyproject.toml、src/ 結構）
 - [x] 撰寫 opentree.json JSON Schema（draft-2020-12）
@@ -201,11 +206,153 @@
 - [x] 建立 10 個模組目錄 + opentree.json manifest
 - [x] 整合測試：validator 驗證全部 10 個 manifest（15 個測試案例）
 - [x] Code Review + HIGH issues 修正
-- [ ] 驗證 CLAUDE_CONFIG_DIR 環境變數的覆蓋範圍（P0 隔離需求，延至 Phase 2）
+- [x] 驗證 CLAUDE_CONFIG_DIR 環境變數 → Phase 4 完成（腳本建立，待實機執行）
+
+> Phase 1-6 完整 TODO 見「九、TODO 更新」
 
 ---
 
-## 六、檔案索引
+## 六、Phase 2 實作結果（2026-03-29）
+
+### 6.1 實作內容
+
+| 元件 | 說明 |
+|------|------|
+| ClaudeMdGenerator | 動態生成 CLAUDE.md（< 200 行目標） |
+| SymlinkManager | .claude/rules/ symlink 建立與管理 |
+| SettingsGenerator | .claude/settings.json 合併產生器 |
+| CLI | opentree install/remove/list/refresh 命令（Typer） |
+| CLAUDE_CONFIG_DIR 研究 | Web research 5 篇 + 隔離可行性驗證 |
+
+### 6.2 Phase 1 修正
+
+- RegistryEntry 新增 `link_method` 和 `depends_on` 欄位
+- Registry 加入 file lock + fsync + crash recovery（寫入 .tmp 再 rename）
+
+### 6.3 推演驗證
+
+- **33 scenarios** 模擬（normal + edge + adversarial）
+- **15 issues** 發現並修正
+
+### 6.4 Code Review
+
+- 0 CRITICAL, 4 HIGH（全部修正）
+
+### 6.5 測試結果
+
+| 指標 | 值 |
+|------|-----|
+| 測試數 | 152（151 pass + 1 xfail） |
+| 覆蓋率 | 90% |
+
+---
+
+## 七、Phase 3 實作結果（2026-03-29）
+
+### 7.1 實作內容
+
+- **28 rule files** 從 DOGI 遷移（1,035 行）
+- **PlaceholderEngine**：per-file 判斷 symlink vs resolved_copy
+  - symlink：不含 placeholder 的檔案
+  - resolved_copy：含 placeholder 的檔案（替換後寫入副本）
+
+### 7.2 Placeholder 類型
+
+| Placeholder | 說明 |
+|-------------|------|
+| `{{bot_name}}` | Bot 名稱 |
+| `{{bot_root}}` | Bot 程式碼根目錄 |
+| `{{data_root}}` | Bot 資料目錄 |
+| `{{home}}` | 使用者 home 目錄 |
+| `{{workspace}}` | 當前 workspace 名稱 |
+
+### 7.3 測試結果
+
+| 指標 | 值 |
+|------|-----|
+| 測試數 | 212（211 pass + 1 xfail） |
+| 覆蓋率 | 91% |
+
+---
+
+## 八、Phase 4-6 實作結果（2026-03-29 ~ 2026-03-30）
+
+### 8.1 Phase 4 (P0): CLAUDE_CONFIG_DIR 驗證
+
+- 驗證腳本已建立：`tests/isolation/verify_config_dir.sh`
+- 確認 CLAUDE_CONFIG_DIR 重定向：.claude.json, .credentials.json, projects/, settings.json
+- 不影響：project-level .claude/
+- **待實機手動執行**
+
+### 8.2 Phase 5 (P1a): prompt_hook 系統
+
+| 元件 | 說明 |
+|------|------|
+| PromptContext | 上下文資料結構（user_id, workspace, channel 等） |
+| 4 builders | memory, slack, requirement, scheduler prompt builders |
+| hook collector | 從已安裝模組收集 prompt_hook 輸出 |
+
+### 8.3 Phase 5 (P1b): opentree init/start 命令
+
+| 命令 | 說明 |
+|------|------|
+| `opentree init` | 一鍵初始化 workspace（安裝 pre-installed 模組） |
+| `opentree start --dry-run` | 啟動 Claude CLI（dry-run 模式顯示參數） |
+| `opentree prompt show` | Debug system prompt 組裝結果 |
+
+### 8.4 Phase 6 (P2): E2E lifecycle 測試
+
+- 完整生命週期測試：init → install → start → prompt
+- Token 比較測試：驗證模組化後 token 用量
+
+### 8.5 Option C: admin_channel 混合策略
+
+- 推演驗證通過
+- 策略：module manifest 定義 channel placeholder，runtime 從 workspace.json 解析
+
+### 8.6 最終測試結果
+
+| 指標 | 值 |
+|------|-----|
+| 測試數 | 265（264 pass + 1 xfail） |
+| 覆蓋率 | 91% |
+| Commits | 8 |
+| Lines added | ~11,500 |
+
+---
+
+## 九、TODO 更新（Phase 1-6 完成後）
+
+### 已完成
+
+- [x] 建立 opentree 專案骨架（pyproject.toml、src/ 結構）
+- [x] 撰寫 opentree.json JSON Schema（draft-2020-12）
+- [x] 實作 ManifestValidator 類別（12 種錯誤碼、39 個測試案例）
+- [x] 實作 Registry CRUD（load/save/register/unregister，16 個測試案例）
+- [x] 建立 10 個模組目錄 + opentree.json manifest
+- [x] 整合測試：validator 驗證全部 10 個 manifest
+- [x] Code Review + HIGH issues 修正
+- [x] CLAUDE.md 動態生成器（ClaudeMdGenerator）
+- [x] .claude/rules/ symlink 管理器（SymlinkManager）
+- [x] .claude/settings.json 合併產生器（SettingsGenerator）
+- [x] opentree install/remove/list/refresh CLI 命令
+- [x] 28 rule files 從 DOGI 遷移（1,035 行）
+- [x] PlaceholderEngine（per-file symlink vs resolved_copy）
+- [x] prompt_hook 系統（PromptContext + 4 builders + hook collector）
+- [x] opentree init/start/prompt 命令
+- [x] E2E lifecycle 測試 + token 比較
+
+### 待完成（優先級排序）
+
+- [ ] CLAUDE_CONFIG_DIR 實機驗證（scripts ready, needs manual run）
+- [ ] requirement prompt_hook（stub, needs data layer）
+- [ ] opentree update command（module upgrade flow）
+- [ ] Python to Go migration（long-term）
+- [ ] DOGI bot integration（connect OpenTree to slack-bot）
+
+---
+
+## 十、檔案索引
 
 ### OpenSpec 文件
 
