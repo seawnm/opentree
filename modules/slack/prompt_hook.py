@@ -1,17 +1,25 @@
-"""Prompt hook stub for the slack module.
-
-Real implementation will be added in Phase 2.
-"""
+"""Slack module prompt hook: inject channel/thread/workspace info."""
 from __future__ import annotations
 
 
 def prompt_hook(context: dict) -> list[str]:
-    """Return dynamic system prompt fragments.
+    """Return Slack-specific system prompt fragments.
 
     Args:
-        context: Dict containing user_id, channel_id, thread_ts, etc.
+        context: Dict containing channel_id, thread_ts, team_name,
+                 workspace, etc.
 
     Returns:
         List of prompt lines to inject into --system-prompt.
     """
-    return []
+    parts: list[str] = []
+    if context.get("channel_id"):
+        parts.append(f"目前頻道 ID：{context['channel_id']}")
+    if context.get("thread_ts"):
+        parts.append(f"目前 Thread TS：{context['thread_ts']}")
+    team = context.get("team_name") or context.get("workspace")
+    if team:
+        parts.append(f"目前 Workspace：{team}")
+    if context.get("workspace"):
+        parts.append(f"目前頻道工作區：{context['workspace']}")
+    return parts

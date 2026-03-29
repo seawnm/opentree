@@ -1,17 +1,19 @@
-"""Prompt hook stub for the requirement module.
+"""Requirement module prompt hook: interview context detection.
 
-Real implementation will be added in Phase 2.
+Full implementation requires requirement data layer (future phase).
+Currently returns empty list.
 """
 from __future__ import annotations
 
 
 def prompt_hook(context: dict) -> list[str]:
-    """Return dynamic system prompt fragments.
+    """Return requirement-related system prompt fragments.
 
     Args:
         context: Dict containing user_id, channel_id, thread_ts, etc.
 
     Returns:
         List of prompt lines to inject into --system-prompt.
+        Currently empty — full implementation in a future phase.
     """
     return []
