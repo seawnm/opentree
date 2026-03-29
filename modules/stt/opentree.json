@@ -1,0 +1,27 @@
+{
+  "name": "stt",
+  "version": "1.0.0",
+  "description": "語音轉文字 — 音訊轉錄、額度管理",
+  "type": "optional",
+  "depends_on": ["slack"],
+  "conflicts_with": [],
+  "loading": {
+    "rules": [
+      "stt-tool.md"
+    ]
+  },
+  "triggers": {
+    "keywords": ["語音", "錄音", "轉錄", "音訊", "m4a"],
+    "description": "語音轉文字工具、額度查詢、音訊清理"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(alloy stt:*)"
+    ],
+    "deny": []
+  },
+  "prompt_hook": null,
+  "placeholders": {
+    "opentree_home": "auto"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "scheduler",
+  "version": "1.0.0",
+  "description": "排程任務 CRUD、監看器、任務鏈",
+  "type": "pre-installed",
+  "depends_on": ["core"],
+  "conflicts_with": [],
+  "loading": {
+    "rules": [
+      "schedule-tool.md",
+      "watcher-tool.md",
+      "task-split-guide.md"
+    ]
+  },
+  "triggers": {
+    "keywords": ["排程", "定時", "提醒", "cron", "監看", "watcher"],
+    "description": "排程工具 CLI 語法、參數、任務鏈和拆分指引"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(uv run --directory $OPENTREE_HOME/bin:*schedule*)",
+      "Bash(uv run --directory $OPENTREE_HOME/bin:*watcher*)"
+    ],
+    "deny": []
+  },
+  "prompt_hook": null,
+  "placeholders": {
+    "opentree_home": "auto"
+  }
+}

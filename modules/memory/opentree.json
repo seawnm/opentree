@@ -1,0 +1,26 @@
+{
+  "name": "memory",
+  "version": "1.0.0",
+  "description": "記憶管理 — 記住、忘記、跨 Thread 引導",
+  "type": "pre-installed",
+  "depends_on": ["core"],
+  "conflicts_with": [],
+  "loading": {
+    "rules": [
+      "memory-sop.md",
+      "memory-paths.md"
+    ]
+  },
+  "triggers": {
+    "keywords": ["記住", "忘記", "記憶", "偏好"],
+    "description": "記憶管理指引、記憶檔案路徑、FTUE 導覽"
+  },
+  "permissions": {
+    "allow": [],
+    "deny": []
+  },
+  "prompt_hook": "prompt_hook.py",
+  "placeholders": {
+    "opentree_home": "auto"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "guardrail",
+  "version": "1.0.0",
+  "description": "權限判斷、安全規則、漸進式拒絕引導",
+  "type": "pre-installed",
+  "depends_on": ["personality"],
+  "conflicts_with": [],
+  "loading": {
+    "rules": [
+      "permission-check.md",
+      "message-ban.md",
+      "denial-escalation.md",
+      "security-rules.md"
+    ]
+  },
+  "triggers": {
+    "keywords": ["權限", "安全", "拒絕"],
+    "description": "權限判斷流程、安全規則、漸進式拒絕引導"
+  },
+  "permissions": {
+    "allow": [],
+    "deny": []
+  },
+  "prompt_hook": null,
+  "placeholders": {
+    "admin_channel": "required",
+    "admin_description": "optional"
+  }
+}

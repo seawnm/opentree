@@ -1,0 +1,28 @@
+{
+  "name": "youtube",
+  "version": "1.0.0",
+  "description": "YouTube 影片資訊庫 — 搜尋、抓取、字幕管理",
+  "type": "optional",
+  "depends_on": ["core"],
+  "conflicts_with": [],
+  "loading": {
+    "rules": [
+      "youtube-tool.md",
+      "youtube-guide.md"
+    ]
+  },
+  "triggers": {
+    "keywords": ["YouTube", "影片", "字幕", "頻道追蹤"],
+    "description": "YouTube 影片搜尋、抓取、字幕管理、頻道追蹤"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(alloy youtube:*)"
+    ],
+    "deny": []
+  },
+  "prompt_hook": null,
+  "placeholders": {
+    "opentree_home": "auto"
+  }
+}

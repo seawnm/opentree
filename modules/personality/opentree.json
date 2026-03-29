@@ -1,0 +1,27 @@
+{
+  "name": "personality",
+  "version": "1.0.0",
+  "description": "Bot 人格設定 — 身份、說話風格、自我介紹",
+  "type": "pre-installed",
+  "depends_on": ["core"],
+  "conflicts_with": [],
+  "loading": {
+    "rules": [
+      "character.md",
+      "tone-rules.md"
+    ]
+  },
+  "triggers": {
+    "keywords": ["自我介紹", "你是誰", "打招呼"],
+    "description": "Bot 名稱、個性、說話風格、首次互動"
+  },
+  "permissions": {
+    "allow": [],
+    "deny": []
+  },
+  "prompt_hook": null,
+  "placeholders": {
+    "bot_name": "required",
+    "team_name": "optional"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "core",
+  "version": "1.0.0",
+  "description": "路由、路徑慣例、環境限制",
+  "type": "pre-installed",
+  "depends_on": [],
+  "conflicts_with": [],
+  "loading": {
+    "rules": [
+      "identity.md",
+      "routing.md",
+      "path-conventions.md",
+      "design-principles.md",
+      "environment.md"
+    ]
+  },
+  "triggers": {
+    "keywords": ["路徑", "設定", "環境"],
+    "description": "路由規則、路徑慣例、環境限制"
+  },
+  "permissions": {
+    "allow": [],
+    "deny": []
+  },
+  "prompt_hook": null,
+  "placeholders": {
+    "opentree_home": "auto"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "requirement",
+  "version": "1.0.0",
+  "description": "需求管理 — 收集、訪談、評估、追蹤",
+  "type": "optional",
+  "depends_on": ["slack"],
+  "conflicts_with": [],
+  "loading": {
+    "rules": [
+      "trigger-rules.md",
+      "requirement-tool.md",
+      "requirement-workflow.md",
+      "invest-checklist.md"
+    ]
+  },
+  "triggers": {
+    "keywords": ["需求", "功能請求", "我想要", "能不能做", "INVEST"],
+    "description": "需求收集流程、CRUD 工具、INVEST 評估"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(uv run --directory $OPENTREE_HOME/bin:*requirement*)"
+    ],
+    "deny": []
+  },
+  "prompt_hook": "prompt_hook.py",
+  "placeholders": {
+    "opentree_home": "auto"
+  }
+}

@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opentree.dev/schema/opentree.v1.json",
+  "title": "OpenTree Module Manifest",
+  "description": "Schema for opentree.json module manifest files",
+  "type": "object",
+  "required": ["name", "version", "description", "type", "loading"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Module identifier, must match directory name"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version (simplified: MAJOR.MINOR.PATCH)"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "One-line module description"
+    },
+    "author": {
+      "type": "string",
+      "description": "Module author"
+    },
+    "license": {
+      "type": "string",
+      "description": "License identifier"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["pre-installed", "optional"],
+      "description": "Module type: pre-installed (bundled) or optional (user-installed)"
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "uniqueItems": true,
+      "default": [],
+      "description": "List of module names this module depends on"
+    },
+    "conflicts_with": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "uniqueItems": true,
+      "default": [],
+      "description": "List of module names that conflict with this module"
+    },
+    "loading": {
+      "type": "object",
+      "required": ["rules"],
+      "additionalProperties": false,
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+\\.md$"
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Rule files to symlink into .claude/rules/ (bare filenames)"
+        }
+      }
+    },
+    "triggers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Trigger keywords for CLAUDE.md index table"
+        },
+        "description": {
+          "type": "string",
+          "description": "Module capability description for CLAUDE.md index table"
+        }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tool patterns to add to allowedTools in .claude/settings.json"
+        },
+        "deny": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tool patterns to add to denyTools in .claude/settings.json"
+        }
+      }
+    },
+    "prompt_hook": {
+      "oneOf": [
+        { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$" },
+        { "type": "null" }
+      ],
+      "description": "Prompt hook script filename relative to module root, or null"
+    },
+    "placeholders": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["required", "optional", "auto"]
+      },
+      "description": "Placeholder variables and their resolution modes"
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "on_install": {
+          "oneOf": [
+            { "type": "string", "pattern": "^(?!.*\\.\\.)(?!/)(?!.*//)[a-zA-Z0-9][a-zA-Z0-9_./-]*$" },
+            { "type": "null" }
+          ],
+          "description": "Script to run after module installation"
+        },
+        "on_remove": {
+          "oneOf": [
+            { "type": "string", "pattern": "^(?!.*\\.\\.)(?!/)(?!.*//)[a-zA-Z0-9][a-zA-Z0-9_./-]*$" },
+            { "type": "null" }
+          ],
+          "description": "Script to run before module removal"
+        }
+      }
+    }
+  }
+}

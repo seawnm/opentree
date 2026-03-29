@@ -1,0 +1,27 @@
+{
+  "name": "audit-logger",
+  "version": "1.0.0",
+  "description": "記憶修改審計 — 追蹤、通知、日誌",
+  "type": "pre-installed",
+  "depends_on": ["memory"],
+  "conflicts_with": [],
+  "loading": {
+    "rules": [
+      "audit-rules.md"
+    ]
+  },
+  "triggers": {
+    "keywords": ["審計", "記憶修改", "追蹤"],
+    "description": "記憶修改審計工具、追蹤機制"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(uv run --directory $OPENTREE_HOME/bin:*memory_audit*)"
+    ],
+    "deny": []
+  },
+  "prompt_hook": null,
+  "placeholders": {
+    "opentree_home": "auto"
+  }
+}

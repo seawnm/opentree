@@ -1,0 +1,36 @@
+{
+  "name": "slack",
+  "version": "1.0.0",
+  "description": "Slack 連線 — 訊息規則、查詢、上傳",
+  "type": "pre-installed",
+  "depends_on": ["core"],
+  "conflicts_with": [],
+  "loading": {
+    "rules": [
+      "message-rules.md",
+      "message-format.md",
+      "upload-tool.md",
+      "query-tool.md"
+    ]
+  },
+  "triggers": {
+    "keywords": ["Slack", "訊息", "上傳", "頻道", "thread"],
+    "description": "Slack 訊息發送規則、查詢工具、檔案上傳"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(uv run --directory $OPENTREE_HOME/bin:*upload*)",
+      "Bash(uv run --directory $OPENTREE_HOME/bin:*slack_query*)"
+    ],
+    "deny": [
+      "mcp__claude_ai_Slack__slack_send_message",
+      "mcp__claude_ai_Slack__slack_send_message_draft",
+      "mcp__claude_ai_Slack__slack_schedule_message"
+    ]
+  },
+  "prompt_hook": "prompt_hook.py",
+  "placeholders": {
+    "opentree_home": "auto",
+    "admin_channel": "required"
+  }
+}
