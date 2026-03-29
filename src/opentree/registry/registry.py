@@ -9,9 +9,16 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
+
+if sys.platform != "win32":
+    import fcntl as _fcntl
+else:
+    _fcntl = None  # type: ignore[assignment]
 
 from opentree.registry.models import RegistryData, RegistryEntry
 
@@ -24,6 +31,56 @@ class Registry:
     The registry file is a JSON file tracking which modules are installed,
     stored at ``$OPENTREE_HOME/config/registry.json``.
     """
+
+    @staticmethod
+    @contextmanager
+    def lock(registry_path: Path, *, timeout: float = 10.0) -> Iterator[None]:
+        """Acquire exclusive file lock for registry operations.
+
+        Uses ``fcntl.flock`` with ``LOCK_NB`` (non-blocking) for immediate
+        feedback when another operation holds the lock.
+
+        Args:
+            registry_path: Path to registry.json (lock file derived from it).
+            timeout: Unused in the non-blocking implementation; kept for
+                future extension.
+
+        Yields:
+            Nothing — used as a context manager guard.
+
+        Raises:
+            TimeoutError: If the lock is already held by another process.
+
+        Usage::
+
+            with Registry.lock(registry_path):
+                data = Registry.load(registry_path)
+                data = Registry.register(data, ...)
+                Registry.save(registry_path, data)
+        """
+        lock_path = registry_path.with_suffix(".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = open(lock_path, "w")  # noqa: SIM115
+        locked = False
+        try:
+            if _fcntl is not None:
+                try:
+                    _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                    locked = True
+                except BlockingIOError:
+                    lock_file.close()
+                    msg = (
+                        f"Another opentree operation is in progress (lock: {lock_path}). "
+                        "Wait for it to complete or remove the lock file manually."
+                    )
+                    raise TimeoutError(msg)
+            # On Windows: advisory lock only (no enforcement)
+            yield
+        finally:
+            if _fcntl is not None and locked:
+                _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_UN)
+            if not lock_file.closed:
+                lock_file.close()
 
     @staticmethod
     def load(registry_path: Path) -> RegistryData:
@@ -40,8 +97,27 @@ class Registry:
             ValueError: If the file contains malformed JSON or an
                 unsupported schema version.
         """
+        # Crash recovery: if registry.json is missing but a valid .tmp exists,
+        # promote the newest valid .tmp to registry.json.
         if not registry_path.exists():
-            return RegistryData(version=_SUPPORTED_VERSION, modules=())
+            tmp_candidates = sorted(
+                registry_path.parent.glob(f"{registry_path.stem}.*.tmp"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            ) if registry_path.parent.exists() else []
+            recovered = False
+            for tmp in tmp_candidates:
+                try:
+                    tmp_text = tmp.read_text(encoding="utf-8")
+                    raw_tmp = json.loads(tmp_text)
+                    if isinstance(raw_tmp, dict) and raw_tmp.get("version") == _SUPPORTED_VERSION:
+                        os.replace(tmp, registry_path)
+                        recovered = True
+                        break
+                except (json.JSONDecodeError, OSError):
+                    tmp.unlink(missing_ok=True)
+            if not recovered:
+                return RegistryData(version=_SUPPORTED_VERSION, modules=())
 
         text = registry_path.read_text(encoding="utf-8")
 
@@ -70,6 +146,8 @@ class Registry:
                     module_type=fields["module_type"],
                     installed_at=fields["installed_at"],
                     source=fields["source"],
+                    link_method=fields.get("link_method", "symlink"),
+                    depends_on=tuple(fields.get("depends_on", ())),
                 )
             except KeyError as exc:
                 msg = f"Registry entry for '{name}' is missing required field {exc}"
@@ -92,26 +170,30 @@ class Registry:
         """
         registry_path.parent.mkdir(parents=True, exist_ok=True)
 
-        modules_dict: dict[str, dict[str, str]] = {}
+        modules_dict: dict[str, dict[str, Any]] = {}
         for name, entry in data.modules:
-            modules_dict[name] = {
+            entry_dict: dict[str, Any] = {
                 "name": entry.name,
                 "version": entry.version,
                 "module_type": entry.module_type,
                 "installed_at": entry.installed_at,
                 "source": entry.source,
+                "link_method": entry.link_method,
             }
+            if entry.depends_on:
+                entry_dict["depends_on"] = list(entry.depends_on)
+            modules_dict[name] = entry_dict
 
-        payload = {
+        payload: dict[str, Any] = {
             "version": data.version,
             "modules": modules_dict,
         }
 
         tmp_path = registry_path.with_name(f"{registry_path.stem}.{os.getpid()}.tmp")
-        tmp_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(payload, indent=2, ensure_ascii=False))
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_path, registry_path)
 
     @staticmethod
@@ -122,6 +204,8 @@ class Registry:
         version: str,
         module_type: str,
         source: str = "bundled",
+        link_method: str = "symlink",
+        depends_on: tuple[str, ...] = (),
     ) -> RegistryData:
         """Register a module, returning a new RegistryData.
 
@@ -134,6 +218,9 @@ class Registry:
             version: Semver version string.
             module_type: ``"pre-installed"`` or ``"optional"``.
             source: ``"bundled"`` or a git URL.
+            link_method: How the module files were linked
+                (``"symlink"``, ``"junction"``, or ``"copy"``).
+            depends_on: Module names this entry depends on.
 
         Returns:
             A new RegistryData with the module added or updated.
@@ -152,6 +239,8 @@ class Registry:
             module_type=module_type,
             installed_at=installed_at,
             source=source,
+            link_method=link_method,
+            depends_on=depends_on,
         )
 
         # Build new modules list, replacing existing entry if present

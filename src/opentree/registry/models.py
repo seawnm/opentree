@@ -18,6 +18,8 @@ class RegistryEntry:
     module_type: str  # "pre-installed" or "optional"
     installed_at: str  # ISO 8601 datetime string
     source: str  # "bundled" or git URL
+    link_method: str = "symlink"  # "symlink" | "junction" | "copy"
+    depends_on: tuple[str, ...] = ()  # module names this entry depends on
 
 
 @dataclass(frozen=True)

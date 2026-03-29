@@ -1,16 +1,19 @@
 """Tests for the Registry CRUD operations.
 
-TDD RED phase — 15 tests covering:
-- Load: nonexistent / valid / malformed / wrong version
-- Save: creates file / parent dirs / roundtrip
-- Register: new / update existing / empty name
+Covers:
+- Load: nonexistent / valid / malformed / wrong version / legacy compat / crash recovery
+- Save: creates file / parent dirs / roundtrip / fsync
+- Register: new / update existing / empty name / link_method / depends_on
 - Unregister: existing / nonexistent
 - Query: is_registered true / false / list sorted
+- Lock: creation / concurrent access guard
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -135,6 +138,65 @@ class TestLoad:
         with pytest.raises(ValueError, match="missing required field"):
             Registry.load(registry_path)
 
+    def test_load_legacy_registry_without_new_fields(self, registry_path: Path) -> None:
+        """Load a legacy registry.json that lacks link_method/depends_on.
+
+        Must apply defaults: link_method='symlink', depends_on=().
+        """
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "version": 1,
+            "modules": {
+                "core": {
+                    "name": "core",
+                    "version": "1.0.0",
+                    "module_type": "pre-installed",
+                    "installed_at": "2026-03-29T10:00:00+08:00",
+                    "source": "bundled",
+                    # No link_method, no depends_on
+                },
+            },
+        }
+        registry_path.write_text(json.dumps(data), encoding="utf-8")
+
+        result = Registry.load(registry_path)
+        entry = result.get("core")
+
+        assert entry is not None
+        assert entry.link_method == "symlink"
+        assert entry.depends_on == ()
+
+    def test_crash_recovery_from_tmp(self, registry_path: Path) -> None:
+        """When registry.json is missing but a valid .tmp exists, load recovers."""
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        # Create a valid .tmp file (simulating crash after write, before rename)
+        tmp_path = registry_path.with_name(f"{registry_path.stem}.99999.tmp")
+        data = {
+            "version": 1,
+            "modules": {
+                "core": {
+                    "name": "core",
+                    "version": "1.0.0",
+                    "module_type": "pre-installed",
+                    "installed_at": "2026-03-29T10:00:00+08:00",
+                    "source": "bundled",
+                },
+            },
+        }
+        tmp_path.write_text(json.dumps(data), encoding="utf-8")
+
+        # registry.json does NOT exist
+        assert not registry_path.exists()
+
+        result = Registry.load(registry_path)
+
+        # Should have recovered
+        assert registry_path.exists()
+        assert result.get("core") is not None
+        assert result.get("core").version == "1.0.0"
+        # tmp file should be gone (renamed to registry.json)
+        assert not tmp_path.exists()
+
 
 # ---------------------------------------------------------------------------
 # Save tests
@@ -183,6 +245,48 @@ class TestSave:
             assert roundtripped.module_type == original.module_type
             assert roundtripped.installed_at == original.installed_at
             assert roundtripped.source == original.source
+
+    def test_save_with_fsync(
+        self, registry_path: Path, sample_registry_data: RegistryData
+    ) -> None:
+        """save() produces a valid file with correct content (fsync behavior)."""
+        Registry.save(registry_path, sample_registry_data)
+
+        assert registry_path.exists()
+        content = json.loads(registry_path.read_text(encoding="utf-8"))
+        assert content["version"] == 1
+        assert "core" in content["modules"]
+        # No leftover .tmp files
+        tmp_files = list(registry_path.parent.glob("*.tmp"))
+        assert tmp_files == []
+
+    def test_save_load_roundtrip_with_new_fields(self, registry_path: Path) -> None:
+        """link_method and depends_on survive a save-then-load roundtrip."""
+        data = RegistryData(
+            version=1,
+            modules=(
+                (
+                    "slack",
+                    RegistryEntry(
+                        name="slack",
+                        version="1.0.0",
+                        module_type="pre-installed",
+                        installed_at="2026-03-29T10:00:00+08:00",
+                        source="bundled",
+                        link_method="copy",
+                        depends_on=("core", "memory"),
+                    ),
+                ),
+            ),
+        )
+
+        Registry.save(registry_path, data)
+        loaded = Registry.load(registry_path)
+
+        entry = loaded.get("slack")
+        assert entry is not None
+        assert entry.link_method == "copy"
+        assert entry.depends_on == ("core", "memory")
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +351,54 @@ class TestRegister:
                 module_type="optional",
             )
 
+    def test_register_with_link_method(self) -> None:
+        """Registering with link_method='copy' stores the value."""
+        data = RegistryData(version=1, modules=())
+
+        updated = Registry.register(
+            data,
+            name="slack",
+            version="1.0.0",
+            module_type="pre-installed",
+            link_method="copy",
+        )
+
+        entry = updated.get("slack")
+        assert entry is not None
+        assert entry.link_method == "copy"
+
+    def test_register_with_depends_on(self) -> None:
+        """Registering with depends_on=('core',) stores the dependency tuple."""
+        data = RegistryData(version=1, modules=())
+
+        updated = Registry.register(
+            data,
+            name="memory",
+            version="1.0.0",
+            module_type="pre-installed",
+            depends_on=("core",),
+        )
+
+        entry = updated.get("memory")
+        assert entry is not None
+        assert entry.depends_on == ("core",)
+
+    def test_register_default_link_method(self) -> None:
+        """Default link_method is 'symlink' when not specified."""
+        data = RegistryData(version=1, modules=())
+
+        updated = Registry.register(
+            data,
+            name="core",
+            version="1.0.0",
+            module_type="pre-installed",
+        )
+
+        entry = updated.get("core")
+        assert entry is not None
+        assert entry.link_method == "symlink"
+        assert entry.depends_on == ()
+
 
 # ---------------------------------------------------------------------------
 # Unregister tests
@@ -300,3 +452,38 @@ class TestQuery:
         result = Registry.list_modules(data)
 
         assert result == ("alpha", "middle", "zebra")
+
+
+# ---------------------------------------------------------------------------
+# Lock tests
+# ---------------------------------------------------------------------------
+
+class TestLock:
+    """Registry.lock() context manager tests."""
+
+    def test_lock_context_manager(self, registry_path: Path) -> None:
+        """lock() creates a .lock file and the body executes normally."""
+        lock_path = registry_path.with_suffix(".lock")
+
+        with Registry.lock(registry_path):
+            # Lock file should exist while inside the context
+            assert lock_path.exists()
+
+        # After exit, lock file still exists on disk (it's just unlocked)
+        assert lock_path.exists()
+
+    def test_lock_already_held(self, registry_path: Path) -> None:
+        """Attempting to acquire a held lock raises TimeoutError."""
+        lock_path = registry_path.with_suffix(".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Hold the lock externally
+        lock_file = open(lock_path, "w")
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            with pytest.raises(TimeoutError, match="Another opentree operation"):
+                with Registry.lock(registry_path):
+                    pass  # Should never reach here
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()

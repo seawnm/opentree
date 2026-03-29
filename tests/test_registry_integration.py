@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+
 from opentree.registry.models import RegistryData
 from opentree.registry.registry import Registry
 
@@ -21,17 +22,17 @@ from opentree.registry.registry import Registry
 # Confirmed module metadata (matches the dependency graph)
 # ---------------------------------------------------------------------------
 
-_MODULE_META: dict[str, dict[str, str]] = {
-    "core": {"version": "1.0.0", "type": "pre-installed"},
-    "personality": {"version": "1.0.0", "type": "pre-installed"},
-    "guardrail": {"version": "1.0.0", "type": "pre-installed"},
-    "memory": {"version": "1.0.0", "type": "pre-installed"},
-    "slack": {"version": "1.0.0", "type": "pre-installed"},
-    "scheduler": {"version": "1.0.0", "type": "pre-installed"},
-    "audit-logger": {"version": "1.0.0", "type": "pre-installed"},
-    "requirement": {"version": "1.0.0", "type": "optional"},
-    "stt": {"version": "1.0.0", "type": "optional"},
-    "youtube": {"version": "1.0.0", "type": "optional"},
+_MODULE_META: dict[str, dict[str, Any]] = {
+    "core": {"version": "1.0.0", "type": "pre-installed", "depends_on": ()},
+    "personality": {"version": "1.0.0", "type": "pre-installed", "depends_on": ("core",)},
+    "guardrail": {"version": "1.0.0", "type": "pre-installed", "depends_on": ("personality",)},
+    "memory": {"version": "1.0.0", "type": "pre-installed", "depends_on": ("core",)},
+    "slack": {"version": "1.0.0", "type": "pre-installed", "depends_on": ("core",)},
+    "scheduler": {"version": "1.0.0", "type": "pre-installed", "depends_on": ("core",)},
+    "audit-logger": {"version": "1.0.0", "type": "pre-installed", "depends_on": ("memory",)},
+    "requirement": {"version": "1.0.0", "type": "optional", "depends_on": ("slack",)},
+    "stt": {"version": "1.0.0", "type": "optional", "depends_on": ("slack",)},
+    "youtube": {"version": "1.0.0", "type": "optional", "depends_on": ("core",)},
 }
 
 # Topological order respecting the dependency graph (alphabetical tie-break).
@@ -60,6 +61,7 @@ def _register_module(data: RegistryData, name: str) -> RegistryData:
         name=name,
         version=meta["version"],
         module_type=meta["type"],
+        depends_on=meta.get("depends_on", ()),
     )
 
 
