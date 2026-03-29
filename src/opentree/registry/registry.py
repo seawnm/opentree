@@ -107,7 +107,7 @@ class Registry:
             "modules": modules_dict,
         }
 
-        tmp_path = registry_path.with_suffix(".tmp")
+        tmp_path = registry_path.with_name(f"{registry_path.stem}.{os.getpid()}.tmp")
         tmp_path.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False),
             encoding="utf-8",

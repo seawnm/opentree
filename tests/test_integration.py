@@ -30,124 +30,28 @@ from opentree.manifest.validator import ManifestValidator
 # Confirmed dependency graph (from design.md / execution-plan.md)
 # ---------------------------------------------------------------------------
 
-_CONFIRMED_MODULES: dict[str, dict[str, Any]] = {
-    "core": {
-        "name": "core",
-        "version": "1.0.0",
-        "description": "Core runtime and shared constants",
-        "type": "pre-installed",
-        "depends_on": [],
-        "conflicts_with": [],
-        "loading": {"rules": ["constants.md", "runtime.md", "paths.md", "tools.md", "security.md"]},
-    },
-    "personality": {
-        "name": "personality",
-        "version": "1.0.0",
-        "description": "DOGI personality and communication style",
-        "type": "pre-installed",
-        "depends_on": ["core"],
-        "conflicts_with": [],
-        "loading": {"rules": ["personality.md", "identity.md"]},
-    },
-    "guardrail": {
-        "name": "guardrail",
-        "version": "1.0.0",
-        "description": "Permission and safety guardrails",
-        "type": "pre-installed",
-        "depends_on": ["personality"],
-        "conflicts_with": [],
-        "loading": {"rules": ["permissions.md", "safety.md", "refusal.md", "audit.md"]},
-    },
-    "memory": {
-        "name": "memory",
-        "version": "1.0.0",
-        "description": "User memory and knowledge management",
-        "type": "pre-installed",
-        "depends_on": ["core"],
-        "conflicts_with": [],
-        "loading": {"rules": ["memory.md", "knowledge.md"]},
-        "prompt_hook": "prompt_hook.py",
-    },
-    "slack": {
-        "name": "slack",
-        "version": "1.0.0",
-        "description": "Slack integration and messaging tools",
-        "type": "pre-installed",
-        "depends_on": ["core"],
-        "conflicts_with": [],
-        "loading": {"rules": ["messaging.md", "upload.md", "query.md", "formatting.md"]},
-        "prompt_hook": "prompt_hook.py",
-    },
-    "scheduler": {
-        "name": "scheduler",
-        "version": "1.0.0",
-        "description": "Task scheduling and cron management",
-        "type": "pre-installed",
-        "depends_on": ["core"],
-        "conflicts_with": [],
-        "loading": {"rules": ["schedule-tool.md", "watcher-tool.md", "task-chain.md"]},
-    },
-    "audit-logger": {
-        "name": "audit-logger",
-        "version": "1.0.0",
-        "description": "Memory modification audit logging",
-        "type": "pre-installed",
-        "depends_on": ["memory"],
-        "conflicts_with": [],
-        "loading": {"rules": ["audit-logger.md"]},
-    },
-    "requirement": {
-        "name": "requirement",
-        "version": "1.0.0",
-        "description": "Requirements gathering and tracking",
-        "type": "optional",
-        "depends_on": ["slack"],
-        "conflicts_with": [],
-        "loading": {"rules": ["requirement-tool.md", "requirement-flow.md", "invest.md", "interview.md"]},
-        "prompt_hook": "prompt_hook.py",
-    },
-    "stt": {
-        "name": "stt",
-        "version": "1.0.0",
-        "description": "Speech-to-text audio transcription",
-        "type": "optional",
-        "depends_on": ["slack"],
-        "conflicts_with": [],
-        "loading": {"rules": ["stt.md"]},
-    },
-    "youtube": {
-        "name": "youtube",
-        "version": "1.0.0",
-        "description": "YouTube video metadata and subtitle search",
-        "type": "optional",
-        "depends_on": ["core"],
-        "conflicts_with": [],
-        "loading": {"rules": ["youtube.md", "youtube-search.md"]},
-    },
-}
-
-_MODULES_DIR = Path(__file__).resolve().parent.parent / "modules"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _RULE_PATTERN = re.compile(r"^[a-z0-9-]+\.md$")
 
 
-def _discover_manifests_from_disk() -> dict[str, dict[str, Any]] | None:
-    """Try to load all 10 manifests from modules/*/opentree.json.
-
-    Returns None if any of the 10 modules is missing on disk.
-    """
-    manifests: dict[str, dict[str, Any]] = {}
-    for name in _CONFIRMED_MODULES:
-        manifest_path = _MODULES_DIR / name / "opentree.json"
-        if not manifest_path.is_file():
-            return None
-        manifests[name] = json.loads(manifest_path.read_text(encoding="utf-8"))
-    return manifests
-
-
 def _get_manifests() -> dict[str, dict[str, Any]]:
-    """Return manifests from disk if available, otherwise use inline data."""
-    disk = _discover_manifests_from_disk()
-    return disk if disk is not None else _CONFIRMED_MODULES
+    """Load all manifests from modules/*/opentree.json on disk.
+
+    Skips (pytest.skip) if the modules directory is missing or contains
+    fewer than 10 manifests.
+    """
+    modules_dir = _PROJECT_ROOT / "modules"
+    if not modules_dir.exists():
+        pytest.skip("modules/ directory not found")
+    manifests: dict[str, dict[str, Any]] = {}
+    for p in sorted(modules_dir.rglob("opentree.json")):
+        data = json.loads(p.read_text(encoding="utf-8"))
+        dir_name = p.parent.name
+        assert data["name"] == dir_name, f"Manifest name '{data['name']}' != directory '{dir_name}'"
+        manifests[dir_name] = data  # key by directory name, not manifest name
+    if len(manifests) < 10:
+        pytest.skip(f"Only {len(manifests)} manifests found, expected 10")
+    return manifests
 
 
 def _topological_sort(manifests: dict[str, dict[str, Any]]) -> list[str]:

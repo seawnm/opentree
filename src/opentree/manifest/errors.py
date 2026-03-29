@@ -17,14 +17,12 @@ class ErrorCode(Enum):
         MANIFEST_PARSE_ERROR: The file is not valid JSON.
         SCHEMA_VALIDATION_ERROR: The manifest does not conform to the JSON Schema.
         NAME_MISMATCH: The name field does not match the module directory name.
-        EMPTY_RULES: The loading.rules array is empty.
-        DUPLICATE_RULES: The loading.rules array contains duplicate entries.
         DEPENDENCY_NOT_FOUND: A depends_on entry references a non-existent module.
         CIRCULAR_DEPENDENCY: The dependency graph contains a cycle.
         SELF_DEPENDENCY: A module lists itself in depends_on.
         CONFLICT_WITH_INSTALLED: A conflicts_with entry matches an installed module.
         MISSING_TRIGGERS: The manifest has no triggers section (warning).
-        UNKNOWN_PLACEHOLDER_MODE: A placeholder value is not required/optional/auto (warning).
+        RULE_FILENAME_COLLISION: Two modules share the same rule filename.
     """
 
     # Structural errors
@@ -36,8 +34,6 @@ class ErrorCode(Enum):
 
     # Semantic errors
     NAME_MISMATCH = "NAME_MISMATCH"
-    EMPTY_RULES = "EMPTY_RULES"
-    DUPLICATE_RULES = "DUPLICATE_RULES"
 
     # Dependency errors
     DEPENDENCY_NOT_FOUND = "DEPENDENCY_NOT_FOUND"
@@ -45,6 +41,8 @@ class ErrorCode(Enum):
     SELF_DEPENDENCY = "SELF_DEPENDENCY"
     CONFLICT_WITH_INSTALLED = "CONFLICT_WITH_INSTALLED"
 
+    # Batch errors
+    RULE_FILENAME_COLLISION = "RULE_FILENAME_COLLISION"
+
     # Warnings
     MISSING_TRIGGERS = "MISSING_TRIGGERS"
-    UNKNOWN_PLACEHOLDER_MODE = "UNKNOWN_PLACEHOLDER_MODE"

@@ -8,9 +8,9 @@ Validation pipeline order:
     1. File existence → MANIFEST_NOT_FOUND
     2. JSON parsing → MANIFEST_PARSE_ERROR
     3. Schema validation → SCHEMA_VALIDATION_ERROR
-    4. Semantic checks → NAME_MISMATCH, MISSING_TRIGGERS, UNKNOWN_PLACEHOLDER_MODE
+    4. Semantic checks → NAME_MISMATCH, MISSING_TRIGGERS
     5. Dependency checks → SELF_DEPENDENCY, DEPENDENCY_NOT_FOUND, CONFLICT_WITH_INSTALLED
-    6. Batch checks → CIRCULAR_DEPENDENCY
+    6. Batch checks → CIRCULAR_DEPENDENCY, RULE_FILENAME_COLLISION
 """
 
 from __future__ import annotations
@@ -27,8 +27,6 @@ from opentree.manifest.models import ManifestValidation, ValidationIssue
 _SCHEMA_PATH = (
     Path(__file__).resolve().parent.parent / "schema" / "opentree.schema.json"
 )
-
-_VALID_PLACEHOLDER_MODES = frozenset({"required", "optional", "auto"})
 
 
 class ManifestValidator:
@@ -193,6 +191,15 @@ class ManifestValidator:
 
         Returns:
             Mapping of ``module_name → ManifestValidation``.
+
+        Note: The dict key for each entry is used as module_dir_name for
+            NAME_MISMATCH checks. Callers must ensure keys match physical
+            directory names (not manifest name fields) for accurate checks.
+
+        Note: Dependency resolution (DEPENDENCY_NOT_FOUND, SELF_DEPENDENCY,
+            CONFLICT_WITH_INSTALLED) is not performed here. Call
+            validate_dependencies() separately for each module with the
+            installed module set.
         """
         results: dict[str, ManifestValidation] = {}
 
@@ -205,7 +212,7 @@ class ManifestValidator:
 
         if cycle_issues:
             # Distribute cycle issues to involved modules
-            cycle_modules = set()
+            cycle_modules: set[str] = set()
             for issue in cycle_issues:
                 # Extract module names from cycle message
                 cycle_modules.update(_extract_cycle_modules(issue.message, manifests))
@@ -220,6 +227,37 @@ class ManifestValidator:
                         issues=merged_issues,
                         manifest_path=existing.manifest_path,
                     )
+
+        # Step 3: cross-module rule filename collision detection
+        rule_seen: dict[str, str] = {}  # filename → first module name
+        collisions: dict[str, set[str]] = {}  # filename → set of all colliding modules
+        for name, data in manifests.items():
+            for rule in data.get("loading", {}).get("rules", []):
+                if rule in rule_seen:
+                    if rule not in collisions:
+                        collisions[rule] = {rule_seen[rule]}
+                    collisions[rule].add(name)
+                else:
+                    rule_seen[rule] = name
+
+        for rule_file, module_names in collisions.items():
+            collision_issue = ValidationIssue(
+                code=ErrorCode.RULE_FILENAME_COLLISION,
+                message=(
+                    f"Rule filename '{rule_file}' is used by multiple modules: "
+                    f"{', '.join(sorted(module_names))}"
+                ),
+                path="loading.rules",
+                severity="error",
+            )
+            for mod_name in module_names:
+                existing = results[mod_name]
+                merged_issues = existing.issues + (collision_issue,)
+                results[mod_name] = ManifestValidation(
+                    is_valid=False,
+                    issues=merged_issues,
+                    manifest_path=existing.manifest_path,
+                )
 
         return results
 
@@ -379,5 +417,16 @@ def _extract_cycle_modules(
     message: str,
     manifests: dict[str, dict[str, Any]],
 ) -> set[str]:
-    """Extract module names mentioned in a cycle message."""
-    return {name for name in manifests if name in message}
+    """Extract module names mentioned in a cycle message.
+
+    Splits on ' -> ' to get exact tokens, then intersects with known module
+    names. This avoids false positives from substring matching (e.g. 'core'
+    matching 'core-ext').
+    """
+    known = set(manifests.keys())
+    prefix = "Circular dependency detected: "
+    if prefix in message:
+        cycle_str = message.split(prefix, 1)[1]
+        tokens = set(cycle_str.split(" -> "))
+        return tokens & known
+    return set()

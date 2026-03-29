@@ -9,7 +9,7 @@
   "properties": {
     "name": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9-]*$",
+      "pattern": "^[a-z]([a-z0-9-]*[a-z0-9])?$",
       "minLength": 1,
       "maxLength": 64,
       "description": "Module identifier, must match directory name"
@@ -42,7 +42,7 @@
       "type": "array",
       "items": {
         "type": "string",
-        "pattern": "^[a-z][a-z0-9-]*$"
+        "pattern": "^[a-z]([a-z0-9-]*[a-z0-9])?$"
       },
       "uniqueItems": true,
       "default": [],
@@ -52,7 +52,7 @@
       "type": "array",
       "items": {
         "type": "string",
-        "pattern": "^[a-z][a-z0-9-]*$"
+        "pattern": "^[a-z]([a-z0-9-]*[a-z0-9])?$"
       },
       "uniqueItems": true,
       "default": [],
@@ -82,12 +82,14 @@
         "keywords": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "description": "Trigger keywords for CLAUDE.md index table"
         },
         "description": {
           "type": "string",
+          "minLength": 1,
           "description": "Module capability description for CLAUDE.md index table"
         }
       }
@@ -114,7 +116,7 @@
     },
     "prompt_hook": {
       "oneOf": [
-        { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$" },
+        { "type": "string", "pattern": "^(?!.*\\.\\.)[a-zA-Z0-9][a-zA-Z0-9_.-]*$" },
         { "type": "null" }
       ],
       "description": "Prompt hook script filename relative to module root, or null"

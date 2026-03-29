@@ -6,7 +6,8 @@ Groups:
     C — Semantic (5): name mismatch, empty/duplicate rules
     D — Dependency (6): satisfied, missing, self, conflict
     E — Batch (2): circular dependency detection
-    F — Warning (3): missing triggers, unknown placeholder mode
+    F — Warning (3): missing triggers, placeholder mode, validity
+    G — Regression (7): collision, cycle extraction, name pattern, prompt_hook
 """
 
 from __future__ import annotations
@@ -115,21 +116,21 @@ class TestStructural:
         assert len(result.errors) == 1
         assert result.errors[0].code == ErrorCode.MANIFEST_PARSE_ERROR
 
-    def test_manifest_oserror_returns_parse_error(
+    def test_manifest_directory_at_path_returns_not_found(
         self,
         validator: ManifestValidator,
         tmp_path: Path,
     ) -> None:
-        """An unreadable file (OSError) triggers MANIFEST_PARSE_ERROR."""
+        """A directory at the manifest path triggers MANIFEST_NOT_FOUND (is_file() is False)."""
         bad_file = tmp_path / "opentree.json"
-        # Create a directory with the same name so read_text raises OSError
+        # Create a directory with the same name so is_file() returns False
         bad_file.mkdir()
 
         result = validator.validate_file(bad_file)
 
-        # is_file() returns False for a directory, so we get MANIFEST_NOT_FOUND
-        # Test the OSError path by using monkeypatch instead
         assert result.is_valid is False
+        assert len(result.errors) == 1
+        assert result.errors[0].code == ErrorCode.MANIFEST_NOT_FOUND
 
     def test_manifest_read_permission_error(
         self,
@@ -393,13 +394,13 @@ class TestSemantic:
         validator: ManifestValidator,
         valid_minimal_manifest: dict[str, Any],
     ) -> None:
-        """rules=[] triggers an error (EMPTY_RULES or SCHEMA_VALIDATION_ERROR)."""
+        """rules=[] triggers SCHEMA_VALIDATION_ERROR (minItems: 1)."""
         data = {**valid_minimal_manifest, "loading": {"rules": []}}
         result = validator.validate_dict(data)
 
         assert result.is_valid is False
         assert any(
-            i.code in (ErrorCode.EMPTY_RULES, ErrorCode.SCHEMA_VALIDATION_ERROR)
+            i.code == ErrorCode.SCHEMA_VALIDATION_ERROR
             for i in result.errors
         )
 
@@ -408,7 +409,7 @@ class TestSemantic:
         validator: ManifestValidator,
         valid_minimal_manifest: dict[str, Any],
     ) -> None:
-        """rules=["a.md","a.md"] triggers an error (DUPLICATE_RULES or SCHEMA)."""
+        """rules=["a.md","a.md"] triggers SCHEMA_VALIDATION_ERROR (uniqueItems)."""
         data = {
             **valid_minimal_manifest,
             "loading": {"rules": ["a.md", "a.md"]},
@@ -417,7 +418,7 @@ class TestSemantic:
 
         assert result.is_valid is False
         assert any(
-            i.code in (ErrorCode.DUPLICATE_RULES, ErrorCode.SCHEMA_VALIDATION_ERROR)
+            i.code == ErrorCode.SCHEMA_VALIDATION_ERROR
             for i in result.errors
         )
 
@@ -617,39 +618,207 @@ class TestWarnings:
         assert len(warnings) == 1
         assert warnings[0].severity == "warning"
 
-    def test_unknown_placeholder_mode_warning(
+    def test_unknown_placeholder_mode_error(
         self,
         validator: ManifestValidator,
         valid_minimal_manifest: dict[str, Any],
     ) -> None:
-        """A placeholder with invalid mode generates UNKNOWN_PLACEHOLDER_MODE warning."""
+        """A placeholder with invalid mode generates SCHEMA_VALIDATION_ERROR."""
         data = {
             **valid_minimal_manifest,
             "placeholders": {"some_var": "required", "bad_var": "manual"},
         }
         result = validator.validate_dict(data)
 
-        # Schema enforces enum ["required","optional","auto"], so this should fail
-        # at schema level. If schema catches it, that's also acceptable.
-        has_issue = any(
-            i.code
-            in (
-                ErrorCode.UNKNOWN_PLACEHOLDER_MODE,
-                ErrorCode.SCHEMA_VALIDATION_ERROR,
-            )
-            for i in result.issues
+        assert result.is_valid is False
+        assert any(
+            i.code == ErrorCode.SCHEMA_VALIDATION_ERROR
+            for i in result.errors
         )
-        assert has_issue
 
     def test_warnings_do_not_block_validity(
         self,
         validator: ManifestValidator,
         valid_minimal_manifest: dict[str, Any],
     ) -> None:
-        """A manifest with warnings but no errors is still is_valid=True."""
+        """A manifest with MISSING_TRIGGERS warning but no errors is still is_valid=True."""
         # valid_minimal has no triggers → generates MISSING_TRIGGERS warning
         result = validator.validate_dict(valid_minimal_manifest)
 
         assert result.is_valid is True
-        assert len(result.warnings) >= 1
+        assert any(
+            i.code == ErrorCode.MISSING_TRIGGERS for i in result.warnings
+        )
         assert len(result.errors) == 0
+
+
+# ---------------------------------------------------------------------------
+# Group G: Additional regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestBatchCollision:
+    """Cross-module rule filename collision detection (Fix 1)."""
+
+    def test_batch_rule_filename_collision(
+        self,
+        validator: ManifestValidator,
+    ) -> None:
+        """Two modules sharing the same rule filename triggers RULE_FILENAME_COLLISION."""
+        manifests = {
+            "mod-a": {
+                "name": "mod-a",
+                "version": "1.0.0",
+                "description": "Module A",
+                "type": "optional",
+                "loading": {"rules": ["shared.md", "a-only.md"]},
+            },
+            "mod-b": {
+                "name": "mod-b",
+                "version": "1.0.0",
+                "description": "Module B",
+                "type": "optional",
+                "loading": {"rules": ["shared.md", "b-only.md"]},
+            },
+        }
+        results = validator.validate_batch(manifests)
+
+        # Both modules should get the collision error
+        for name in ("mod-a", "mod-b"):
+            collision_errors = [
+                i
+                for i in results[name].errors
+                if i.code == ErrorCode.RULE_FILENAME_COLLISION
+            ]
+            assert len(collision_errors) == 1, (
+                f"Expected RULE_FILENAME_COLLISION for '{name}', got: "
+                f"{[i.code for i in results[name].errors]}"
+            )
+            assert results[name].is_valid is False
+            assert "shared.md" in collision_errors[0].message
+
+
+class TestCycleModuleExtraction:
+    """Cycle module extraction uses token split, not substring (Fix 2)."""
+
+    def test_extract_cycle_modules_no_substring_false_positive(
+        self,
+        validator: ManifestValidator,
+    ) -> None:
+        """Module 'core' must NOT get a cycle error when only 'core-ext' cycles."""
+        manifests = {
+            "core": {
+                "name": "core",
+                "version": "1.0.0",
+                "description": "Core module",
+                "type": "pre-installed",
+                "loading": {"rules": ["core.md"]},
+            },
+            "core-ext": {
+                "name": "core-ext",
+                "version": "1.0.0",
+                "description": "Core extension",
+                "type": "optional",
+                "depends_on": ["helper"],
+                "loading": {"rules": ["core-ext.md"]},
+            },
+            "helper": {
+                "name": "helper",
+                "version": "1.0.0",
+                "description": "Helper module",
+                "type": "optional",
+                "depends_on": ["core-ext"],
+                "loading": {"rules": ["helper.md"]},
+            },
+        }
+        results = validator.validate_batch(manifests)
+
+        # "core" should have NO circular dependency errors
+        core_circular = [
+            i
+            for i in results["core"].issues
+            if i.code == ErrorCode.CIRCULAR_DEPENDENCY
+        ]
+        assert core_circular == [], (
+            f"'core' should not get cycle error, but got: "
+            f"{[i.message for i in core_circular]}"
+        )
+
+        # "core-ext" and "helper" SHOULD have circular dependency errors
+        for name in ("core-ext", "helper"):
+            circular = [
+                i
+                for i in results[name].issues
+                if i.code == ErrorCode.CIRCULAR_DEPENDENCY
+            ]
+            assert len(circular) >= 1, (
+                f"'{name}' should have CIRCULAR_DEPENDENCY error"
+            )
+
+
+class TestNamePatternRegressions:
+    """Name pattern rejects trailing hyphens (Fix 4)."""
+
+    def test_name_trailing_hyphen_rejected(
+        self,
+        validator: ManifestValidator,
+        valid_minimal_manifest: dict[str, Any],
+    ) -> None:
+        """Name 'core-' (trailing hyphen) triggers SCHEMA_VALIDATION_ERROR."""
+        data = {**valid_minimal_manifest, "name": "core-"}
+        result = validator.validate_dict(data)
+
+        assert result.is_valid is False
+        assert any(
+            i.code == ErrorCode.SCHEMA_VALIDATION_ERROR for i in result.errors
+        )
+
+    def test_name_single_char_valid(
+        self,
+        validator: ManifestValidator,
+        valid_minimal_manifest: dict[str, Any],
+    ) -> None:
+        """Single character name 'a' passes schema validation."""
+        data = {**valid_minimal_manifest, "name": "a"}
+        result = validator.validate_dict(data)
+
+        schema_name_errors = [
+            i
+            for i in result.errors
+            if i.code == ErrorCode.SCHEMA_VALIDATION_ERROR and "name" in i.path
+        ]
+        assert schema_name_errors == []
+
+    def test_name_with_hyphens_valid(
+        self,
+        validator: ManifestValidator,
+        valid_minimal_manifest: dict[str, Any],
+    ) -> None:
+        """Name 'audit-logger' passes schema validation."""
+        data = {**valid_minimal_manifest, "name": "audit-logger"}
+        result = validator.validate_dict(data)
+
+        schema_name_errors = [
+            i
+            for i in result.errors
+            if i.code == ErrorCode.SCHEMA_VALIDATION_ERROR and "name" in i.path
+        ]
+        assert schema_name_errors == []
+
+
+class TestPromptHookRegression:
+    """Prompt hook rejects double-dot sequences (Fix 6)."""
+
+    def test_prompt_hook_double_dot_rejected(
+        self,
+        validator: ManifestValidator,
+        valid_minimal_manifest: dict[str, Any],
+    ) -> None:
+        """prompt_hook 'prompt..hook.py' triggers SCHEMA_VALIDATION_ERROR."""
+        data = {**valid_minimal_manifest, "prompt_hook": "prompt..hook.py"}
+        result = validator.validate_dict(data)
+
+        assert result.is_valid is False
+        assert any(
+            i.code == ErrorCode.SCHEMA_VALIDATION_ERROR for i in result.errors
+        )

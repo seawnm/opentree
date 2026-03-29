@@ -40,7 +40,7 @@ class ManifestValidation:
     """
 
     is_valid: bool
-    issues: tuple[ValidationIssue, ...] = field(default_factory=tuple)
+    issues: tuple[ValidationIssue, ...] = field(default=())
     manifest_path: str = ""
 
     @property
