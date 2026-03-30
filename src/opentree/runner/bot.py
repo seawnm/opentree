@@ -10,6 +10,7 @@ from typing import Optional
 
 from opentree.runner.config import load_runner_config
 from opentree.runner.dispatcher import Dispatcher
+from opentree.runner.logging_config import setup_logging
 from opentree.runner.receiver import Receiver
 from opentree.runner.slack_api import SlackAPI
 
@@ -62,6 +63,10 @@ class Bot:
         7. receiver.start() (blocks)
         8. On return/exception: _shutdown()
         """
+        log_dir = self._home / "data" / "logs"
+        setup_logging(log_dir)
+        logger.info("OpenTree Bot starting (home: %s)", self._home)
+
         bot_token, app_token = self._load_tokens()
 
         # Step 2: initialize SlackAPI and verify credentials

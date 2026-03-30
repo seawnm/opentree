@@ -293,7 +293,32 @@ def init_command(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
 
-    # 6. Success summary
+    # 6. Generate bin/run.sh and config/.env.example
+    bin_dir = opentree_home / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    template_dir = Path(__file__).resolve().parent.parent / "templates"
+    run_sh_template = template_dir / "run.sh"
+    if run_sh_template.is_file():
+        content = run_sh_template.read_text(encoding="utf-8")
+        content = content.replace("{{opentree_home}}", str(opentree_home))
+        run_sh_path = bin_dir / "run.sh"
+        run_sh_path.write_text(content, encoding="utf-8")
+        run_sh_path.chmod(0o755)
+        typer.echo(f"  Created {run_sh_path}")
+
+    env_example = opentree_home / "config" / ".env.example"
+    if not env_example.exists():
+        env_example.write_text(
+            "# OpenTree Bot Configuration\n"
+            "# Copy this file to .env and fill in the values\n"
+            "SLACK_BOT_TOKEN=xoxb-your-bot-token\n"
+            "SLACK_APP_TOKEN=xapp-your-app-token\n",
+            encoding="utf-8",
+        )
+        typer.echo(f"  Created {env_example}")
+
+    # 7. Success summary
     installed = ", ".join(_PRE_INSTALLED)
     typer.echo(f"Initialized OpenTree at {opentree_home}")
     typer.echo(f"Pre-installed modules: {installed}")
