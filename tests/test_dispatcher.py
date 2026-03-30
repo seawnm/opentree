@@ -804,3 +804,138 @@ class TestDispatchIntegration:
         assert done.is_set(), "process_task should have been called"
         # Session should be saved
         assert dispatcher._session_mgr.get_session_id(task.thread_ts) == "sess-integration"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 integration: ProgressReporter, download_files, build_thread_context
+# ---------------------------------------------------------------------------
+
+class TestPhase2Integration:
+    def _make_result(self, **kwargs):
+        """Build a fake ClaudeResult-like object with safe numeric defaults."""
+        result = MagicMock()
+        result.is_error = kwargs.get("is_error", False)
+        result.is_timeout = kwargs.get("is_timeout", False)
+        result.response_text = kwargs.get("response_text", "OK")
+        result.session_id = kwargs.get("session_id", "sess-001")
+        result.error_message = kwargs.get("error_message", "")
+        result.elapsed_seconds = kwargs.get("elapsed_seconds", 1.5)
+        result.input_tokens = kwargs.get("input_tokens", 100)
+        result.output_tokens = kwargs.get("output_tokens", 50)
+        return result
+
+    def test_process_task_with_progress_reporter(self, tmp_path):
+        """ProgressReporter.start() is called, which calls send_message for the ack."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        fake_result = self._make_result()
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+        ):
+            MockClaude.return_value.run.return_value = fake_result
+            dispatcher._process_task(task)
+
+        # ProgressReporter.start() sends the initial ack via send_message.
+        slack_api.send_message.assert_called()
+        # ProgressReporter.complete() updates the ack message.
+        slack_api.update_message.assert_called()
+
+    def test_process_task_downloads_files(self, tmp_path):
+        """When task has files, download_files is called with the bot token."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        # Give the mock slack_api a bot_token attribute.
+        slack_api.bot_token = "xoxb-test-token"
+
+        files = [{"name": "report.pdf", "url_private_download": "https://example.com/report.pdf"}]
+        task = make_task(files=files)
+        task.status = TaskStatus.RUNNING
+
+        fake_result = self._make_result()
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.download_files", return_value=[]) as mock_dl,
+            patch("opentree.runner.dispatcher.build_file_context", return_value="") as mock_fc,
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+        ):
+            MockClaude.return_value.run.return_value = fake_result
+            dispatcher._process_task(task)
+
+        mock_dl.assert_called_once()
+        call_args = mock_dl.call_args
+        assert call_args[0][0] == files  # first positional arg: files list
+        assert call_args[0][1] == task.thread_ts  # second: thread_ts
+        mock_fc.assert_called_once()
+
+    def test_process_task_thread_context_prepended(self, tmp_path):
+        """build_thread_context result is prepended to the Claude message."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task(text="What is 2+2?")
+        task.status = TaskStatus.RUNNING
+
+        fake_result = self._make_result()
+        thread_ctx = "alice: some earlier message"
+
+        captured_messages = []
+
+        def capture_claude(**kwargs):
+            captured_messages.append(kwargs.get("message", ""))
+            m = MagicMock()
+            m.run.return_value = fake_result
+            return m
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess", side_effect=capture_claude),
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=thread_ctx),
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+        ):
+            dispatcher._process_task(task)
+
+        assert len(captured_messages) == 1
+        msg = captured_messages[0]
+        assert thread_ctx in msg
+        assert "What is 2+2?" in msg
+        assert msg.index(thread_ctx) < msg.index("What is 2+2?")
+
+    def test_cleanup_temp_called_on_success(self, tmp_path):
+        """cleanup_temp is called in the finally block after successful execution."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        fake_result = self._make_result()
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp") as mock_cleanup,
+        ):
+            MockClaude.return_value.run.return_value = fake_result
+            dispatcher._process_task(task)
+
+        mock_cleanup.assert_called_once_with(task.thread_ts)
+
+    def test_cleanup_temp_called_on_failure(self, tmp_path):
+        """cleanup_temp is called in the finally block even when Claude raises."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", side_effect=RuntimeError("boom")),
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp") as mock_cleanup,
+        ):
+            dispatcher._process_task(task)
+
+        mock_cleanup.assert_called_once_with(task.thread_ts)

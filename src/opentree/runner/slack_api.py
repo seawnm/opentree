@@ -42,6 +42,7 @@ class SlackAPI:
         _check_slack_sdk()
         from slack_sdk import WebClient
 
+        self._bot_token = bot_token
         self._client = WebClient(token=bot_token)
         self._user_cache: dict[str, str] = {}     # user_id -> display_name
         self._channel_cache: dict[str, str] = {}  # channel_id -> name
@@ -76,6 +77,11 @@ class SlackAPI:
         Empty string until :meth:`auth_test` has been called successfully.
         """
         return self._bot_user_id
+
+    @property
+    def bot_token(self) -> str:
+        """The Slack Bot Token used to authenticate this client."""
+        return self._bot_token
 
     # ------------------------------------------------------------------
     # Messaging

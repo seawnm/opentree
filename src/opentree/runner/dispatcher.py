@@ -14,9 +14,12 @@ from opentree.registry.models import RegistryData
 from opentree.registry.registry import Registry
 from opentree.runner.claude_process import ClaudeProcess, ClaudeResult
 from opentree.runner.config import RunnerConfig, load_runner_config
+from opentree.runner.file_handler import build_file_context, cleanup_temp, download_files
+from opentree.runner.progress import ProgressReporter, build_completion_blocks
 from opentree.runner.session import SessionManager
 from opentree.runner.slack_api import SlackAPI
 from opentree.runner.task_queue import Task, TaskQueue, TaskStatus
+from opentree.runner.thread_context import build_thread_context
 
 logger = logging.getLogger(__name__)
 
@@ -167,30 +170,34 @@ class Dispatcher:
         """Process a single task (runs in a worker thread).
 
         Steps:
-        1. Send initial "thinking" ack to Slack.
+        1. Create ProgressReporter and send initial "thinking" ack to Slack.
         2. Resolve user_name from Slack API; sanitize for filesystem safety.
-        3. Build :class:`~opentree.core.prompt.PromptContext` from task fields.
-        4. Assemble system prompt.
-        5. Look up existing session_id for thread continuity.
-        6. Build message text (include file references if any).
-        7. Run :class:`~opentree.runner.claude_process.ClaudeProcess`.
-        8. Send result to Slack (update ack or new message).
-        9. Persist session_id on success.
-        10. Mark task completed or failed.
+        3. Download attached files (if any) and build file context string.
+        4. Build thread context from thread history.
+        5. Build :class:`~opentree.core.prompt.PromptContext` from task fields.
+        6. Assemble system prompt.
+        7. Look up existing session_id for thread continuity.
+        8. Build message text (prepend thread context and file context).
+        9. Run :class:`~opentree.runner.claude_process.ClaudeProcess` with
+           progress callback.
+        10. Send final result via ProgressReporter.complete().
+        11. Persist session_id on success.
+        12. Mark task completed or failed.
+        13. Cleanup temp files in a finally block.
 
         Args:
             task: The task to execute.
         """
-        ack_ts: str = ""
+        reporter = ProgressReporter(
+            slack_api=self._slack,
+            channel=task.channel_id,
+            thread_ts=task.thread_ts,
+            interval=self._runner_config.progress_interval,
+        )
 
         try:
-            # Step 1: send initial ack.
-            ack_resp = self._slack.send_message(
-                task.channel_id,
-                ":hourglass_flowing_sand: Processing...",
-                thread_ts=task.thread_ts,
-            )
-            ack_ts = ack_resp.get("ts", "") if isinstance(ack_resp, dict) else ""
+            # Step 1: send initial ack via ProgressReporter.
+            reporter.start()
 
             # Step 2: resolve user_name from Slack; sanitize for path safety.
             resolved_name = self._slack.get_user_display_name(task.user_id)
@@ -198,10 +205,25 @@ class Dispatcher:
                 # Fallback to user_id which is always safe ([A-Z0-9]+).
                 resolved_name = task.user_id
 
-            # Step 3: build PromptContext.
+            # Step 3: download attached files and build file context.
+            file_context: str = ""
+            if task.files:
+                bot_token: str = getattr(self._slack, "bot_token", "")
+                downloaded = download_files(task.files, task.thread_ts, bot_token)
+                file_context = build_file_context(downloaded)
+
+            # Step 4: build thread context from history.
+            thread_context: str = build_thread_context(
+                self._slack,
+                task.channel_id,
+                task.thread_ts,
+                self._slack.bot_user_id,
+            )
+
+            # Step 5: build PromptContext.
             context = self._build_prompt_context(task, user_name=resolved_name)
 
-            # Step 3: assemble system prompt.
+            # Step 6: assemble system prompt.
             system_prompt = assemble_system_prompt(
                 self._home,
                 self._registry,
@@ -209,69 +231,105 @@ class Dispatcher:
                 context,
             )
 
-            # Step 4: look up existing session_id.
+            # Step 7: look up existing session_id.
             session_id: str = self._session_mgr.get_session_id(task.thread_ts) or ""
 
-            # Step 5: build message text.
-            message = self._build_message(task)
+            # Step 8: build message text with optional thread/file context prepended.
+            message = self._build_message(task, thread_context=thread_context, file_context=file_context)
 
-            # Step 6: run Claude.
+            # Step 9: run Claude with progress callback.
             claude = ClaudeProcess(
                 config=self._runner_config,
                 system_prompt=system_prompt,
                 cwd=self._workspace_dir,
                 session_id=session_id,
                 message=message,
+                progress_callback=reporter.update,
             )
             result: ClaudeResult = claude.run()
 
-            # Step 7: send result to Slack.
+            # Step 10: send final result via ProgressReporter.
+            try:
+                elapsed = float(result.elapsed_seconds)
+            except (TypeError, ValueError):
+                elapsed = 0.0
             if result.is_timeout:
-                self._send_result(
-                    task,
-                    ack_ts,
-                    ":clock1: Request timed out. Please try again.",
+                reporter.complete(
+                    response_text="",
+                    elapsed=elapsed,
+                    is_error=True,
+                    error_message="Request timed out. Please try again.",
                 )
                 self._task_queue.mark_failed(task)
                 return
+
+            try:
+                input_tokens = int(result.input_tokens)
+            except (TypeError, ValueError):
+                input_tokens = 0
+            try:
+                output_tokens = int(result.output_tokens)
+            except (TypeError, ValueError):
+                output_tokens = 0
+            reporter.complete(
+                response_text=result.response_text or "",
+                elapsed=elapsed,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                is_error=result.is_error,
+                error_message=result.error_message or "",
+            )
 
             if result.is_error:
-                error_text = (
-                    f":x: Error: {result.error_message}"
-                    if result.error_message
-                    else ":x: An unexpected error occurred."
-                )
-                self._send_result(task, ack_ts, error_text)
                 self._task_queue.mark_failed(task)
                 return
 
-            # Success path.
-            self._send_result(task, ack_ts, result.response_text or "(no response)")
-
-            # Step 8: persist session_id.
+            # Step 11: persist session_id.
             if result.session_id:
                 self._session_mgr.set_session_id(task.thread_ts, result.session_id)
 
-            # Step 9: mark completed.
+            # Step 12: mark completed.
             self._task_queue.mark_completed(task)
 
         except Exception:
             logger.exception("Unexpected error while processing task %s", task.task_id)
+            reporter.stop()
             self._task_queue.mark_failed(task)
 
-    def _build_message(self, task: Task) -> str:
+        finally:
+            # Step 13: always clean up temp files.
+            cleanup_temp(task.thread_ts)
+
+    def _build_message(
+        self,
+        task: Task,
+        thread_context: str = "",
+        file_context: str = "",
+    ) -> str:
         """Build the message text to pass to Claude CLI.
 
-        Appends brief file references when the task has attached files.
+        Prepends thread history context and file context (when available),
+        then appends the user's message text.  When ``file_context`` is not
+        provided (empty string) but ``task.files`` is non-empty, falls back to
+        appending a brief file-reference list so the old call signature still
+        works as before.
 
         Args:
-            task: The task whose text and files are used.
+            task: The task whose text is used.
+            thread_context: Formatted thread history string (may be empty).
+            file_context: Formatted file attachment string (may be empty).
 
         Returns:
             A string message for Claude.
         """
-        parts: list[str] = [task.text]
-        if task.files:
+        parts: list[str] = []
+        if thread_context:
+            parts.append(thread_context)
+        if file_context:
+            parts.append(file_context)
+        parts.append(task.text)
+        # Fallback: include bare file refs when no rich file_context was given.
+        if not file_context and task.files:
             file_refs = ", ".join(
                 f.get("name", f.get("id", "unnamed")) for f in task.files
             )

@@ -13,6 +13,9 @@
   - `stream_parser.py`: stream-json 解析（phase 偵測、token 統計）
   - `slack_api.py`: Slack Web API 封裝（SDK only、快取、error isolation）
   - `task_queue.py`: 並行控制（per-thread 序列化、FIFO、drain）
+  - `progress.py`: Block Kit 進度回報（背景 thread 定期更新、spinner、token 統計）
+  - `thread_context.py`: Thread 歷史讀取（滑動視窗、char 上限截斷）
+  - `file_handler.py`: Slack 附件下載（sanitize、大小限制、cleanup）
   - `session.py`: Session 管理（thread_ts → session_id、JSON 持久化、atomic save）
   - `config.py`: RunnerConfig（frozen dataclass、runner.json 載入）
 - `opentree start --mode slack`: 新增 Slack bot daemon 模式
