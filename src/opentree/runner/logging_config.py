@@ -32,13 +32,13 @@ def setup_logging(
         level: Root logger level (DEBUG, INFO, WARNING, ERROR)
         max_days: Days to keep old log files (default 30)
     """
-    log_dir.mkdir(parents=True, exist_ok=True)
-
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)  # capture everything; handlers filter
 
     # Remove any pre-existing handlers (avoid duplicates on re-init)
-    root.handlers.clear()
+    for handler in root.handlers[:]:
+        handler.close()
+        root.removeHandler(handler)
 
     # Console handler
     console = logging.StreamHandler(sys.stderr)
@@ -47,16 +47,20 @@ def setup_logging(
     root.addHandler(console)
 
     # File handler (daily rotation)
-    log_file = log_dir / f"{datetime.now().strftime('%Y-%m-%d')}.log"
-    file_handler = TimedRotatingFileHandler(
-        str(log_file),
-        when="midnight",
-        backupCount=max_days,
-        encoding="utf-8",
-    )
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(logging.Formatter(_FILE_FORMAT, datefmt=_FILE_DATE))
-    root.addHandler(file_handler)
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"{datetime.now().strftime('%Y-%m-%d')}.log"
+        file_handler = TimedRotatingFileHandler(
+            str(log_file),
+            when="midnight",
+            backupCount=max_days,
+            encoding="utf-8",
+        )
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(_FILE_FORMAT, datefmt=_FILE_DATE))
+        root.addHandler(file_handler)
+    except (PermissionError, OSError) as exc:
+        logging.warning("Cannot write logs to %s: %s (console-only mode)", log_dir, exc)
 
 
 def get_log_path(log_dir: Path) -> Path:

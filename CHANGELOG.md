@@ -18,7 +18,10 @@
   - `file_handler.py`: Slack 附件下載（sanitize、大小限制、cleanup）
   - `session.py`: Session 管理（thread_ts → session_id、JSON 持久化、atomic save）
   - `config.py`: RunnerConfig（frozen dataclass、runner.json 載入）
+  - `logging_config.py`: 日誌系統（daily rotation + console 雙輸出、PermissionError fallback）
+- `templates/run.sh`: Bash wrapper（自動重啟、watchdog、crash loop 保護、DNS 檢查）
 - `opentree start --mode slack`: 新增 Slack bot daemon 模式
+- `opentree init`: 產生 `bin/run.sh`（placeholder 替換 + chmod +x）和 `config/.env.example`
 - `pyproject.toml`: 新增 `[slack]` optional dependency group（slack-bolt、slack-sdk）
 
 ### Changed
@@ -26,8 +29,20 @@
 - `core/prompt.py`: 新增 `_is_safe_name()` 和 `_is_safe_hook_path()` 路徑驗證（防止 path traversal）
 - `cli/init.py`: `start_command` 新增 `--mode` 參數（`interactive` | `slack`），加入模式驗證
 
+### Fixed
+- `run.sh`: `wait || true` 導致 crash detection 失效（exit code 永遠為 0）
+- `run.sh`: `$BOT_CMD` 未引號導致路徑含空格時崩潰（改用 bash array）
+- `run.sh`: `cleanup()` 無 timeout（bot 掛起時 wrapper 永遠阻塞，加入 40s timeout + SIGKILL）
+- `file_handler.py`: `cleanup_temp()` 路徑與 `download_files()` 不一致（統一使用 `_safe_thread_dir()`）
+- `progress.py`: `_push_progress()` 缺少例外處理（Slack API 429 導致 thread 靜默終止）
+- `logging_config.py`: `handlers.clear()` 未 close handler（file descriptor 洩漏）
+- `bot.py`: `_shutdown()` 重新讀取 config（改用 start() 時快取的值）
+- `dispatcher.py`: `reporter.start()` 失敗時使用者無回應（加入 fallback send_message）
+
 ### 設計決策
-詳見 [openspec/changes/20260330-slack-bot-runner/](openspec/changes/20260330-slack-bot-runner/)
+- Phase 1 核心循環：[openspec/changes/20260330-slack-bot-runner/](openspec/changes/20260330-slack-bot-runner/)
+- Phase 2 UX 強化：[openspec/changes/20260330-phase2-ux/](openspec/changes/20260330-phase2-ux/)
+- Phase 3 運維：[openspec/changes/20260330-phase3-ops/](openspec/changes/20260330-phase3-ops/)
 
 ## [0.1.0] - 2026-03-29
 

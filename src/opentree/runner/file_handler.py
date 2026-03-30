@@ -252,7 +252,7 @@ def cleanup_temp(thread_ts: str, temp_base: Path = DEFAULT_TEMP_BASE) -> None:
         thread_ts: Thread timestamp identifying the directory to remove.
         temp_base: Base temp directory (default: DEFAULT_TEMP_BASE).
     """
-    thread_dir = temp_base / thread_ts
+    thread_dir = _safe_thread_dir(thread_ts, temp_base)
     if thread_dir.exists():
         shutil.rmtree(thread_dir)
         logger.debug("Cleaned up temp directory: %s", thread_dir)

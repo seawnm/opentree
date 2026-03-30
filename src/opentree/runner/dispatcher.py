@@ -294,6 +294,15 @@ class Dispatcher:
         except Exception:
             logger.exception("Unexpected error while processing task %s", task.task_id)
             self._task_queue.mark_failed(task)
+            if not reporter.message_ts:
+                try:
+                    self._slack.send_message(
+                        task.channel_id,
+                        ":x: An error occurred.",
+                        thread_ts=task.thread_ts,
+                    )
+                except Exception:
+                    pass
 
         finally:
             reporter.stop()

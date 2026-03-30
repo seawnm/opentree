@@ -45,6 +45,7 @@ class Bot:
         self._slack_api: Optional[SlackAPI] = None
         self._dispatcher: Optional[Dispatcher] = None
         self._receiver: Optional[Receiver] = None
+        self._runner_config = None
 
     # ------------------------------------------------------------------
     # Public interface
@@ -83,6 +84,7 @@ class Bot:
 
         # Step 3: initialize Dispatcher
         self._dispatcher = Dispatcher(self._home, self._slack_api, self._shutdown_event)
+        self._runner_config = load_runner_config(self._home)
 
         # Step 4: register signal handlers
         self._setup_signal_handlers()
@@ -200,7 +202,7 @@ class Bot:
 
         # Drain tasks if dispatcher is available
         if self._dispatcher is not None:
-            runner_config = load_runner_config(self._home)
+            runner_config = self._runner_config if self._runner_config is not None else load_runner_config(self._home)
             drain_timeout = runner_config.drain_timeout
             drained = self._dispatcher.task_queue.wait_for_drain(timeout=drain_timeout)
             if not drained:

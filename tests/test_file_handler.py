@@ -676,8 +676,8 @@ class TestCleanupTemp:
 
     def test_removes_thread_directory(self, tmp_path):
         thread_ts = "cleanup-test-1234"
-        thread_dir = tmp_path / thread_ts
-        thread_dir.mkdir()
+        thread_dir = _safe_thread_dir(thread_ts, tmp_path)
+        thread_dir.mkdir(parents=True, exist_ok=True)
         (thread_dir / "file.txt").write_text("data")
 
         cleanup_temp(thread_ts=thread_ts, temp_base=tmp_path)
@@ -690,7 +690,7 @@ class TestCleanupTemp:
 
     def test_removes_nested_contents(self, tmp_path):
         thread_ts = "cleanup-nested"
-        thread_dir = tmp_path / thread_ts
+        thread_dir = _safe_thread_dir(thread_ts, tmp_path)
         nested = thread_dir / "sub" / "deep"
         nested.mkdir(parents=True)
         (nested / "file.bin").write_bytes(b"\x00" * 100)
@@ -702,10 +702,10 @@ class TestCleanupTemp:
     def test_other_thread_dirs_untouched(self, tmp_path):
         keep_ts = "keep-this-1111"
         remove_ts = "remove-this-2222"
-        keep_dir = tmp_path / keep_ts
-        remove_dir = tmp_path / remove_ts
-        keep_dir.mkdir()
-        remove_dir.mkdir()
+        keep_dir = _safe_thread_dir(keep_ts, tmp_path)
+        remove_dir = _safe_thread_dir(remove_ts, tmp_path)
+        keep_dir.mkdir(parents=True, exist_ok=True)
+        remove_dir.mkdir(parents=True, exist_ok=True)
         (keep_dir / "important.txt").write_text("keep me")
 
         cleanup_temp(thread_ts=remove_ts, temp_base=tmp_path)

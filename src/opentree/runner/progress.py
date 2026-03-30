@@ -260,9 +260,12 @@ class ProgressReporter:
         blocks = build_progress_blocks(state, elapsed=elapsed)
         fallback = f":clock1: {int(elapsed)}s"
 
-        self._slack.update_message(
-            channel=self._channel,
-            ts=self._message_ts,
-            text=fallback,
-            blocks=blocks,
-        )
+        try:
+            self._slack.update_message(
+                channel=self._channel,
+                ts=self._message_ts,
+                text=fallback,
+                blocks=blocks,
+            )
+        except Exception as exc:
+            logger.warning("Progress update failed: %s", exc)

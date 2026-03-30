@@ -21,7 +21,7 @@ set -euo pipefail
 # ---- Configuration ----
 
 OPENTREE_HOME="{{opentree_home}}"
-BOT_CMD="opentree start --mode slack --home $OPENTREE_HOME"
+BOT_CMD=(opentree start --mode slack --home "$OPENTREE_HOME")
 DATA_DIR="$OPENTREE_HOME/data"
 PID_FILE="$DATA_DIR/bot.pid"
 HEARTBEAT_FILE="$DATA_DIR/bot.heartbeat"
@@ -157,6 +157,15 @@ cleanup() {
 
     if [ -n "${BOT_PID:-}" ] && kill -0 "$BOT_PID" 2>/dev/null; then
         kill -TERM "$BOT_PID" 2>/dev/null || true
+        local count=0
+        while [ $count -lt 40 ] && kill -0 "$BOT_PID" 2>/dev/null; do
+            sleep 1
+            count=$((count + 1))
+        done
+        if kill -0 "$BOT_PID" 2>/dev/null; then
+            log "Bot did not exit after 40s, sending SIGKILL"
+            kill -9 "$BOT_PID" 2>/dev/null || true
+        fi
         wait "$BOT_PID" 2>/dev/null || true
     fi
 
@@ -208,13 +217,15 @@ while true; do
 
     # -- Start bot (background + wait, so signal trap can respond immediately) --
     log "Starting bot..."
-    $BOT_CMD &
+    "${BOT_CMD[@]}" &
     BOT_PID=$!
     echo "$BOT_PID" > "$PID_FILE"
     log "Bot started (PID: $BOT_PID)"
 
-    wait $BOT_PID || true
+    set +e
+    wait "$BOT_PID"
     exit_code=$?
+    set -e
     BOT_PID=""
 
     # -- Cleanup per-run state --
