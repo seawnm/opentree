@@ -319,10 +319,15 @@ def start_command(
         bool,
         typer.Option("--isolate", help="Use isolated Claude config directory"),
     ] = False,
+    mode: Annotated[
+        str,
+        typer.Option(
+            "--mode",
+            help="Run mode: 'interactive' (TUI) or 'slack' (bot daemon)",
+        ),
+    ] = "interactive",
 ) -> None:
     """Launch Claude CLI with the assembled system prompt."""
-    from opentree.core.prompt import PromptContext, assemble_system_prompt
-
     opentree_home = _resolve_home(home)
     reg_path = opentree_home / "config" / "registry.json"
 
@@ -333,6 +338,24 @@ def start_command(
             err=True,
         )
         raise typer.Exit(code=1)
+
+    _VALID_MODES = {"slack", "interactive"}
+    if mode not in _VALID_MODES:
+        typer.echo(
+            f"Error: unknown mode '{mode}'. Choose from: {', '.join(sorted(_VALID_MODES))}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if mode == "slack":
+        from opentree.runner.bot import Bot
+
+        bot = Bot(opentree_home)
+        bot.start()
+        return
+
+    # --- interactive mode (default) ---
+    from opentree.core.prompt import PromptContext, assemble_system_prompt
 
     config = load_user_config(opentree_home)
     registry = Registry.load(reg_path)

@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +23,55 @@ from zoneinfo import ZoneInfo
 
 from opentree.core.config import UserConfig
 from opentree.registry.models import RegistryData
+
+# Lock that serialises the critical section inside collect_module_prompts
+# where sys.modules is mutated.  One lock is sufficient because the
+# thread-unique key already prevents functional collisions; the lock adds
+# an extra layer of safety for the del/exec_module sequence.
+_hook_lock = threading.Lock()
+
+# Pattern for safe module names: letters, digits, hyphens, underscores only.
+_SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _is_safe_name(name: str) -> bool:
+    """Return True iff *name* is a safe module-directory component.
+
+    A safe name matches ``^[a-zA-Z0-9_-]+$`` — no dots, slashes, spaces,
+    or other characters that could be used for path traversal.
+    """
+    if not name:
+        return False
+    return bool(_SAFE_NAME_RE.match(name))
+
+
+def _is_safe_hook_path(hook_path: Path, modules_dir: Path) -> bool:
+    """Return True iff the *resolved* ``hook_path`` is strictly inside
+    *modules_dir*.
+
+    Uses ``Path.resolve()`` so that any ``..`` components are eliminated
+    before the comparison.  The hook path must be *strictly* inside
+    ``modules_dir`` — equal to it is not acceptable.
+    """
+    try:
+        resolved_hook = hook_path.resolve()
+        resolved_modules = modules_dir.resolve()
+    except (OSError, ValueError):
+        return False
+
+    # is_relative_to is available on Python 3.9+; we also exclude exact equality.
+    try:
+        return (
+            resolved_hook.is_relative_to(resolved_modules)
+            and resolved_hook != resolved_modules
+        )
+    except AttributeError:
+        # Fallback for Python < 3.9 (should not occur in practice)
+        try:
+            resolved_hook.relative_to(resolved_modules)
+            return resolved_hook != resolved_modules
+        except ValueError:
+            return False
 
 
 @dataclass(frozen=True)
@@ -120,12 +171,37 @@ def collect_module_prompts(
     Errors in individual hooks are caught and reported as comment lines
     rather than propagated, so one broken module cannot break the entire
     prompt.
+
+    Thread safety
+    -------------
+    Each invocation uses a key that embeds the current thread id so that
+    concurrent calls never share a ``sys.modules`` entry.  The module is
+    removed from ``sys.modules`` after execution so that entries do not
+    accumulate.  A module-level lock (``_hook_lock``) serialises the
+    mutation window for extra safety.
+
+    Security
+    --------
+    Both the module *name* (from the registry) and the *hook_file* value
+    from the manifest are validated before use:
+
+    * ``name`` must match ``^[a-zA-Z0-9_-]+$``.
+    * ``hook_file`` must not contain any directory separator or ``..``
+      component.
+    * The resolved ``hook_path`` must lie strictly inside
+      ``opentree_home / "modules"``.
     """
     results: list[str] = []
     context_dict = context.to_dict()
+    modules_dir = opentree_home / "modules"
+    thread_id = threading.get_ident()
 
     for name, _entry in registry.modules:
-        manifest_path = opentree_home / "modules" / name / "opentree.json"
+        # --- Security: validate module name ---------------------------------
+        if not _is_safe_name(name):
+            continue
+
+        manifest_path = modules_dir / name / "opentree.json"
         if not manifest_path.is_file():
             continue
 
@@ -138,22 +214,40 @@ def collect_module_prompts(
         if not hook_file:
             continue
 
-        hook_path = opentree_home / "modules" / name / hook_file
+        # --- Security: validate hook_file -----------------------------------
+        # Must be a plain filename with no directory separators or traversal.
+        if "/" in hook_file or "\\" in hook_file or ".." in hook_file:
+            continue
+
+        hook_path = modules_dir / name / hook_file
+
+        # --- Security: resolved path must stay inside modules_dir -----------
+        if not _is_safe_hook_path(hook_path, modules_dir):
+            continue
+
         if not hook_path.is_file():
             continue
 
+        # --- Thread-safe dynamic import -------------------------------------
+        # Use a thread-unique key so concurrent calls cannot collide in
+        # sys.modules.  Wrap the mutation window with _hook_lock.
+        mod_key = f"opentree_hook_{name}_{thread_id}"
+
         try:
-            # Use a unique module name to avoid collisions in sys.modules
-            mod_key = f"opentree_hook_{name}"
-            if mod_key in sys.modules:
-                del sys.modules[mod_key]
+            with _hook_lock:
+                if mod_key in sys.modules:
+                    del sys.modules[mod_key]
 
-            spec = importlib.util.spec_from_file_location(mod_key, str(hook_path))
-            if spec is None or spec.loader is None:
-                continue
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
+                spec = importlib.util.spec_from_file_location(
+                    mod_key, str(hook_path)
+                )
+                if spec is None or spec.loader is None:
+                    continue
+                mod = importlib.util.module_from_spec(spec)
+                sys.modules[mod_key] = mod  # register before exec so relative imports work
+                spec.loader.exec_module(mod)
 
+            # Call the hook outside the lock — the module object is local
             hook_fn = getattr(mod, "prompt_hook", None)
             if callable(hook_fn):
                 lines = hook_fn(context_dict)
@@ -161,6 +255,10 @@ def collect_module_prompts(
                     results.extend(lines)
         except Exception as exc:
             results.append(f"# [{name}] prompt_hook error: {exc}")
+        finally:
+            # Always clean up the thread-local sys.modules entry
+            with _hook_lock:
+                sys.modules.pop(mod_key, None)
 
     return results
 
