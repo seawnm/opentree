@@ -745,28 +745,6 @@ class TestBuildMessage:
 
 
 # ---------------------------------------------------------------------------
-# _send_result — update vs new message
-# ---------------------------------------------------------------------------
-
-class TestSendResult:
-    def test_updates_existing_message_when_ack_ts_present(self, tmp_path):
-        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
-        task = make_task()
-        dispatcher._send_result(task, ack_ts="9999.0001", text="response text")
-        slack_api.update_message.assert_called_once_with(
-            task.channel_id, "9999.0001", text="response text"
-        )
-        slack_api.send_message.assert_not_called()
-
-    def test_sends_new_message_when_no_ack_ts(self, tmp_path):
-        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
-        task = make_task()
-        dispatcher._send_result(task, ack_ts="", text="response text")
-        slack_api.send_message.assert_called_once()
-        slack_api.update_message.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
 # Integration-style: full dispatch → _process_task flow
 # ---------------------------------------------------------------------------
 

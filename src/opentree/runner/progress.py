@@ -245,8 +245,6 @@ class ProgressReporter:
         """Background loop: update Slack message every `interval` seconds."""
         while not self._stop_event.wait(self._interval):
             # stop_event.wait() returns True when set, False on timeout
-            if self._stop_event.is_set():
-                break
             self._push_progress()
 
     def _push_progress(self) -> None:

@@ -121,11 +121,9 @@ def _truncate_to_limit(messages: list[str], max_chars: int) -> list[str]:
         return list(messages)
 
     # Drop from the oldest end until we fit, keeping at least 1 message
-    result = list(messages)
-    while len(result) > 1:
-        total = sum(len(m) for m in result)
-        if total <= max_chars:
-            break
-        result.pop(0)
-
-    return result
+    total = sum(len(m) for m in messages)
+    i = 0
+    while i < len(messages) - 1 and total > max_chars:
+        total -= len(messages[i])
+        i += 1
+    return list(messages[i:])

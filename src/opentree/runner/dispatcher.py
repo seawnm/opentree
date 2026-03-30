@@ -293,10 +293,10 @@ class Dispatcher:
 
         except Exception:
             logger.exception("Unexpected error while processing task %s", task.task_id)
-            reporter.stop()
             self._task_queue.mark_failed(task)
 
         finally:
+            reporter.stop()
             # Step 13: always clean up temp files.
             cleanup_temp(task.thread_ts)
 
@@ -335,19 +335,6 @@ class Dispatcher:
             )
             parts.append(f"[Attached files: {file_refs}]")
         return "\n".join(parts)
-
-    def _send_result(self, task: Task, ack_ts: str, text: str) -> None:
-        """Update the ack message with the final result, or send a new one.
-
-        Args:
-            task: The originating task (for channel/thread info).
-            ack_ts: Timestamp of the ack message to update (may be empty).
-            text: The text to send.
-        """
-        if ack_ts:
-            self._slack.update_message(task.channel_id, ack_ts, text=text)
-        else:
-            self._slack.send_message(task.channel_id, text, thread_ts=task.thread_ts)
 
     # ------------------------------------------------------------------
     # PromptContext builder

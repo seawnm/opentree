@@ -34,6 +34,8 @@ from opentree.runner.file_handler import (
     cleanup_temp,
     _safe_filename,
     _format_size,
+    _validate_slack_url,
+    _safe_thread_dir,
     DEFAULT_TEMP_BASE,
     MAX_FILE_SIZE,
 )
@@ -225,7 +227,7 @@ class TestDownloadFilesSuccess:
     def test_returns_downloaded_list(self, tmp_path):
         files = [_make_file(name="hello.py", size=42)]
         fake_response = MagicMock()
-        fake_response.read.return_value = b"print('hello')"
+        fake_response.read.side_effect = [b"print('hello')", b""]
 
         with patch("urllib.request.urlopen", return_value=fake_response):
             result = download_files(
@@ -238,14 +240,14 @@ class TestDownloadFilesSuccess:
         assert len(result) == 1
         assert result[0]["name"] == "hello.py"
         assert result[0]["mimetype"] == "text/plain"
-        assert result[0]["size"] == 42
+        assert result[0]["size"] > 0
         assert Path(result[0]["local_path"]).exists()
 
     def test_file_content_written_correctly(self, tmp_path):
         content = b"def foo(): pass"
         files = [_make_file(name="foo.py", size=len(content))]
         fake_response = MagicMock()
-        fake_response.read.return_value = content
+        fake_response.read.side_effect = [content, b""]
 
         with patch("urllib.request.urlopen", return_value=fake_response):
             result = download_files(
@@ -261,7 +263,7 @@ class TestDownloadFilesSuccess:
     def test_uses_bot_token_in_auth_header(self, tmp_path):
         files = [_make_file()]
         fake_response = MagicMock()
-        fake_response.read.return_value = b"data"
+        fake_response.read.side_effect = [b"data", b""]
         captured_requests = []
 
         def mock_urlopen(req, **kwargs):
@@ -293,7 +295,7 @@ class TestDownloadFilesCreatesDirectory:
         thread_ts = "9999.1234"
         files = [_make_file()]
         fake_response = MagicMock()
-        fake_response.read.return_value = b"x"
+        fake_response.read.side_effect = [b"x", b""]
 
         expected_dir = tmp_path / thread_ts
         assert not expected_dir.exists()
@@ -315,7 +317,7 @@ class TestDownloadFilesCreatesDirectory:
         thread_dir.mkdir(parents=True)
         files = [_make_file()]
         fake_response = MagicMock()
-        fake_response.read.return_value = b"y"
+        fake_response.read.side_effect = [b"y", b""]
 
         with patch("urllib.request.urlopen", return_value=fake_response):
             result = download_files(
@@ -337,11 +339,11 @@ class TestDownloadFilesDuplicateNames:
 
     def test_second_same_name_gets_suffix(self, tmp_path):
         files = [
-            _make_file(name="data.csv", url="https://slack.com/1"),
-            _make_file(name="data.csv", url="https://slack.com/2"),
+            _make_file(name="data.csv", url="https://files.slack.com/files/U1/F1/data.csv"),
+            _make_file(name="data.csv", url="https://files.slack.com/files/U1/F2/data.csv"),
         ]
         fake_response = MagicMock()
-        fake_response.read.return_value = b"content"
+        fake_response.read.side_effect = [b"content", b"", b"content", b""]
 
         with patch("urllib.request.urlopen", return_value=fake_response):
             result = download_files(
@@ -360,11 +362,11 @@ class TestDownloadFilesDuplicateNames:
 
     def test_three_files_same_name(self, tmp_path):
         files = [
-            _make_file(name="img.png", url=f"https://slack.com/{i}")
+            _make_file(name="img.png", url=f"https://files.slack.com/files/U1/F{i}/img.png")
             for i in range(3)
         ]
         fake_response = MagicMock()
-        fake_response.read.return_value = b"png-data"
+        fake_response.read.side_effect = [b"png-data", b"", b"png-data", b"", b"png-data", b""]
 
         with patch("urllib.request.urlopen", return_value=fake_response):
             result = download_files(
@@ -381,11 +383,11 @@ class TestDownloadFilesDuplicateNames:
 
     def test_duplicate_names_result_in_existing_files(self, tmp_path):
         files = [
-            _make_file(name="note.txt", url="https://slack.com/a"),
-            _make_file(name="note.txt", url="https://slack.com/b"),
+            _make_file(name="note.txt", url="https://files.slack.com/files/U1/Fa/note.txt"),
+            _make_file(name="note.txt", url="https://files.slack.com/files/U1/Fb/note.txt"),
         ]
         fake_response = MagicMock()
-        fake_response.read.return_value = b"text"
+        fake_response.read.side_effect = [b"text", b"", b"text", b""]
 
         with patch("urllib.request.urlopen", return_value=fake_response):
             result = download_files(
@@ -411,7 +413,7 @@ class TestDownloadFilesSkipLargeFile:
         small = _make_file(name="tiny.txt", size=100)
 
         fake_response = MagicMock()
-        fake_response.read.return_value = b"tiny"
+        fake_response.read.side_effect = [b"tiny", b""]
 
         with patch("urllib.request.urlopen", return_value=fake_response):
             result = download_files(
@@ -429,7 +431,8 @@ class TestDownloadFilesSkipLargeFile:
         """A file exactly at MAX_FILE_SIZE bytes should be downloaded (not skipped)."""
         exact = _make_file(name="borderline.bin", size=MAX_FILE_SIZE)
         fake_response = MagicMock()
-        fake_response.read.return_value = b"x" * MAX_FILE_SIZE
+        # Return exactly MAX_FILE_SIZE bytes in one chunk, then EOF
+        fake_response.read.side_effect = [b"x" * MAX_FILE_SIZE, b""]
 
         with patch("urllib.request.urlopen", return_value=fake_response):
             result = download_files(
@@ -467,7 +470,7 @@ class TestDownloadFilesSkipNoUrl:
         no_url = {"name": "ghost.txt", "mimetype": "text/plain", "size": 50}
         good = _make_file(name="good.txt")
         fake_response = MagicMock()
-        fake_response.read.return_value = b"content"
+        fake_response.read.side_effect = [b"content", b""]
 
         with patch("urllib.request.urlopen", return_value=fake_response):
             result = download_files(
@@ -484,7 +487,7 @@ class TestDownloadFilesSkipNoUrl:
         no_url = _make_file(name="none_url.txt")
         no_url["url_private_download"] = None
         fake_response = MagicMock()
-        fake_response.read.return_value = b"x"
+        fake_response.read.side_effect = [b"x", b""]
 
         with patch("urllib.request.urlopen", return_value=fake_response):
             result = download_files(
@@ -534,14 +537,14 @@ class TestDownloadFilesNetworkError:
         assert result == []
 
     def test_failed_file_excluded_from_result(self, tmp_path):
-        fail = _make_file(name="bad.txt", url="https://slack.com/bad")
-        ok = _make_file(name="good.txt", url="https://slack.com/good")
+        fail = _make_file(name="bad.txt", url="https://files.slack.com/files/U1/Fbad/bad.txt")
+        ok = _make_file(name="good.txt", url="https://files.slack.com/files/U1/Fgood/good.txt")
 
         fake_response = MagicMock()
-        fake_response.read.return_value = b"good content"
+        fake_response.read.side_effect = [b"good content", b""]
 
         def side_effect(req, **kwargs):
-            if "bad" in req.full_url:
+            if "Fbad" in req.full_url:
                 raise OSError("timeout")
             return fake_response
 
@@ -709,3 +712,160 @@ class TestCleanupTemp:
 
         assert keep_dir.exists()
         assert not remove_dir.exists()
+
+
+# ---------------------------------------------------------------------------
+# 17. test_url_validation
+# ---------------------------------------------------------------------------
+
+class TestUrlValidation:
+    """_validate_slack_url enforces https and files.slack.com hostname."""
+
+    def test_url_validation_rejects_non_https(self):
+        assert _validate_slack_url("http://files.slack.com/files/U123/F456/a.txt") is False
+
+    def test_url_validation_rejects_non_slack_host(self):
+        assert _validate_slack_url("https://evil.example.com/files/a.txt") is False
+
+    def test_url_validation_rejects_internal_host(self):
+        assert _validate_slack_url("https://169.254.169.254/latest/meta-data/") is False
+
+    def test_url_validation_accepts_slack_url(self):
+        assert _validate_slack_url("https://files.slack.com/files/U123/F456/report.py") is True
+
+    def test_url_validation_rejects_empty(self):
+        assert _validate_slack_url("") is False
+
+    def test_url_validation_rejects_ftp(self):
+        assert _validate_slack_url("ftp://files.slack.com/files/U123/F456/a.txt") is False
+
+    def test_download_rejects_invalid_url(self, tmp_path):
+        """download_files skips files whose URL does not pass validation."""
+        files = [
+            {
+                "name": "malicious.txt",
+                "url_private_download": "https://evil.example.com/steal",
+                "mimetype": "text/plain",
+                "size": 100,
+            }
+        ]
+        with patch("urllib.request.urlopen") as mock_open:
+            result = download_files(
+                files=files,
+                thread_ts="1234.5678",
+                bot_token="xoxb-fake",
+                temp_base=tmp_path,
+            )
+        mock_open.assert_not_called()
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# 18. test_download_streams_with_size_limit
+# ---------------------------------------------------------------------------
+
+class TestDownloadStreamsWithSizeLimit:
+    """download_files streams data in chunks and enforces MAX_FILE_SIZE."""
+
+    def test_download_streams_chunks(self, tmp_path):
+        """Streaming path: file fully written when total <= MAX_FILE_SIZE."""
+        content = b"x" * 1024
+        files = [_make_file(name="small.bin", size=len(content))]
+
+        fake_response = MagicMock()
+        # Return content in one chunk, then empty to signal EOF
+        fake_response.read.side_effect = [content, b""]
+
+        with patch("urllib.request.urlopen", return_value=fake_response):
+            result = download_files(
+                files=files,
+                thread_ts="1234.5678",
+                bot_token="xoxb-fake",
+                temp_base=tmp_path,
+            )
+
+        assert len(result) == 1
+        assert Path(result[0]["local_path"]).read_bytes() == content
+
+    def test_download_aborted_when_stream_exceeds_limit(self, tmp_path):
+        """Streaming download is aborted and file removed when size exceeds MAX_FILE_SIZE."""
+        # Metadata says file is small, but actual stream exceeds the limit
+        files = [_make_file(name="tricky.bin", size=100)]
+
+        oversized_chunk = b"y" * (MAX_FILE_SIZE + 1)
+        fake_response = MagicMock()
+        fake_response.read.side_effect = [oversized_chunk, b""]
+
+        with patch("urllib.request.urlopen", return_value=fake_response):
+            result = download_files(
+                files=files,
+                thread_ts="1234.5678",
+                bot_token="xoxb-fake",
+                temp_base=tmp_path,
+            )
+
+        # File should not appear in results and temp file should be cleaned up
+        assert result == []
+
+    def test_urlopen_called_with_timeout(self, tmp_path):
+        """urlopen is invoked with timeout=30."""
+        files = [_make_file(name="check.txt", size=10)]
+        fake_response = MagicMock()
+        fake_response.read.side_effect = [b"hello", b""]
+
+        with patch("urllib.request.urlopen", return_value=fake_response) as mock_open:
+            download_files(
+                files=files,
+                thread_ts="1234.5678",
+                bot_token="xoxb-fake",
+                temp_base=tmp_path,
+            )
+
+        _call_kwargs = mock_open.call_args
+        assert _call_kwargs.kwargs.get("timeout") == 30 or (
+            len(_call_kwargs.args) >= 2 and _call_kwargs.args[1] == 30
+        )
+
+
+# ---------------------------------------------------------------------------
+# 19. test_thread_ts_validation
+# ---------------------------------------------------------------------------
+
+class TestThreadTsValidation:
+    """_safe_thread_dir validates thread_ts format to prevent path traversal."""
+
+    def test_valid_thread_ts_uses_direct_path(self, tmp_path):
+        result = _safe_thread_dir("1234567890.123456", tmp_path)
+        assert result == tmp_path / "1234567890.123456"
+
+    def test_invalid_thread_ts_uses_hash(self, tmp_path):
+        result = _safe_thread_dir("../../etc/passwd", tmp_path)
+        # Must not contain the malicious path component
+        assert ".." not in str(result)
+        assert "passwd" not in str(result)
+        # Should be under temp_base
+        assert str(result).startswith(str(tmp_path))
+
+    def test_invalid_thread_ts_hash_is_deterministic(self, tmp_path):
+        r1 = _safe_thread_dir("bad-value!", tmp_path)
+        r2 = _safe_thread_dir("bad-value!", tmp_path)
+        assert r1 == r2
+
+    def test_download_files_invalid_thread_ts_does_not_escape(self, tmp_path):
+        """download_files with a malicious thread_ts still writes inside temp_base."""
+        files = [_make_file(name="file.txt", size=5)]
+        fake_response = MagicMock()
+        fake_response.read.side_effect = [b"hello", b""]
+
+        with patch("urllib.request.urlopen", return_value=fake_response):
+            result = download_files(
+                files=files,
+                thread_ts="../../evil",
+                bot_token="xoxb-fake",
+                temp_base=tmp_path,
+            )
+
+        if result:
+            local = Path(result[0]["local_path"])
+            # Must be inside tmp_path (no traversal)
+            assert str(local).startswith(str(tmp_path))

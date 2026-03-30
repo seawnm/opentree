@@ -5,8 +5,11 @@ Claude CLI can access them via the filesystem.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 import shutil
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -17,6 +20,44 @@ DEFAULT_TEMP_BASE = Path("/tmp/opentree")
 
 # Maximum file size (50 MB)
 MAX_FILE_SIZE = 50 * 1024 * 1024
+
+# Chunk size for streaming downloads
+_CHUNK_SIZE = 64 * 1024
+
+# Allowed URL scheme and hostname for Slack file downloads
+_ALLOWED_SCHEME = "https"
+_ALLOWED_HOST = "files.slack.com"
+
+# Valid thread_ts format: digits.digits (e.g. "1234567890.123456")
+_THREAD_TS_RE = re.compile(r"^\d+\.\d+$")
+
+
+def _validate_slack_url(url: str) -> bool:
+    """Return True only if the URL is a valid Slack file download URL.
+
+    Enforces:
+    - scheme must be "https"
+    - hostname must be "files.slack.com"
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    return parsed.scheme == _ALLOWED_SCHEME and parsed.hostname == _ALLOWED_HOST
+
+
+def _safe_thread_dir(thread_ts: str, temp_base: Path) -> Path:
+    """Return a safe temp directory path for thread_ts.
+
+    If thread_ts matches the expected format (digits.digits) it is used
+    directly.  Otherwise a SHA-256 hex digest is used as the directory name
+    to prevent path traversal.
+    """
+    if _THREAD_TS_RE.match(thread_ts):
+        return temp_base / thread_ts
+    safe = hashlib.sha256(thread_ts.encode()).hexdigest()
+    logger.warning("thread_ts %r has unexpected format; using hash %s", thread_ts, safe)
+    return temp_base / safe
 
 
 def download_files(
@@ -41,7 +82,7 @@ def download_files(
         Each file is downloaded to: {temp_base}/{thread_ts}/{filename}
         Duplicate filenames get a numeric suffix: file.py, file_1.py, etc.
     """
-    thread_dir = temp_base / thread_ts
+    thread_dir = _safe_thread_dir(thread_ts, temp_base)
     thread_dir.mkdir(parents=True, exist_ok=True)
 
     downloaded: list[dict] = []
@@ -50,6 +91,14 @@ def download_files(
         url = file.get("url_private_download")
         if not url:
             logger.debug("Skipping file with no url_private_download: %s", file.get("name"))
+            continue
+
+        if not _validate_slack_url(url):
+            logger.warning(
+                "Skipping file %s: URL failed validation: %s",
+                file.get("name"),
+                url,
+            )
             continue
 
         size = file.get("size", 0)
@@ -79,18 +128,37 @@ def download_files(
                 url,
                 headers={"Authorization": f"Bearer {bot_token}"},
             )
-            response = urllib.request.urlopen(req)
-            data = response.read()
-            local_path.write_bytes(data)
-            downloaded.append(
-                {
-                    "name": file.get("name", safe_name),
-                    "local_path": str(local_path),
-                    "mimetype": file.get("mimetype", "application/octet-stream"),
-                    "size": size,
-                }
-            )
-            logger.info("Downloaded %s -> %s", file.get("name"), local_path)
+            response = urllib.request.urlopen(req, timeout=30)
+            # Stream download in chunks, enforcing MAX_FILE_SIZE
+            total = 0
+            fully_downloaded = False
+            with local_path.open("wb") as fh:
+                while True:
+                    chunk = response.read(_CHUNK_SIZE)
+                    if not chunk:
+                        fully_downloaded = True
+                        break
+                    total += len(chunk)
+                    if total > MAX_FILE_SIZE:
+                        local_path.unlink(missing_ok=True)
+                        logger.warning(
+                            "Download aborted: exceeds %d bytes for %s",
+                            MAX_FILE_SIZE,
+                            safe_name,
+                        )
+                        break
+                    fh.write(chunk)
+
+            if fully_downloaded:
+                downloaded.append(
+                    {
+                        "name": file.get("name", safe_name),
+                        "local_path": str(local_path),
+                        "mimetype": file.get("mimetype", "application/octet-stream"),
+                        "size": total,
+                    }
+                )
+                logger.info("Downloaded %s -> %s", file.get("name"), local_path)
         except Exception as exc:
             logger.warning("Failed to download %s: %s", file.get("name"), exc)
 
