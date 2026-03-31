@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -12,8 +13,10 @@ from opentree.core.config import UserConfig, load_user_config
 from opentree.core.prompt import PromptContext, assemble_system_prompt
 from opentree.registry.models import RegistryData
 from opentree.registry.registry import Registry
+from opentree.runner.circuit_breaker import CircuitBreaker
 from opentree.runner.claude_process import ClaudeProcess, ClaudeResult
 from opentree.runner.config import RunnerConfig, load_runner_config
+from opentree.runner.retry import RetryConfig, classify_error, should_retry
 from opentree.runner.file_handler import build_file_context, cleanup_temp, download_files
 from opentree.runner.progress import ProgressReporter, build_completion_blocks
 from opentree.runner.session import SessionManager
@@ -85,6 +88,10 @@ class Dispatcher:
         # Session and task management.
         self._session_mgr = SessionManager(opentree_home / "data")
         self._task_queue = TaskQueue(self._runner_config.max_concurrent_tasks)
+
+        # Circuit breaker: stops sending requests to Claude CLI when it
+        # fails consecutively, preventing cascading failures.
+        self._circuit_breaker = CircuitBreaker()
 
         # Layer 2 dedup: prevents duplicate dispatch even if Receiver
         # layer misses due to concurrent handler execution.
@@ -167,6 +174,15 @@ class Dispatcher:
         parsed = self.parse_message(task.text, self._slack.bot_user_id, files=task.files)
         if parsed.is_admin_command:
             self._handle_admin_command(task, parsed.admin_command)
+            return
+
+        # Circuit breaker: reject non-admin tasks when Claude CLI is unhealthy.
+        if not self._circuit_breaker.allow_request():
+            self._slack.send_message(
+                task.channel_id,
+                ":warning: Service temporarily unavailable. Please try again later.",
+                thread_ts=task.thread_ts,
+            )
             return
 
         # Update task text to the stripped (mention-removed) version.
@@ -265,18 +281,55 @@ class Dispatcher:
             # Step 8: build message text with optional thread/file context prepended.
             message = self._build_message(task, thread_context=thread_context, file_context=file_context)
 
-            # Step 9: run Claude with progress callback.
-            claude = ClaudeProcess(
-                config=self._runner_config,
-                system_prompt=system_prompt,
-                cwd=self._workspace_dir,
-                session_id=session_id,
-                message=message,
-                progress_callback=reporter.update,
-            )
-            result: ClaudeResult = claude.run()
+            # Step 9: run Claude with retry loop for transient errors.
+            retry_config = RetryConfig()
+            result: ClaudeResult | None = None
 
-            # Step 10: send final result via ProgressReporter.
+            for attempt in range(retry_config.max_attempts + 1):
+                claude = ClaudeProcess(
+                    config=self._runner_config,
+                    system_prompt=system_prompt,
+                    cwd=self._workspace_dir,
+                    session_id=session_id,
+                    message=message,
+                    progress_callback=reporter.update,
+                )
+                result = claude.run()
+
+                # Timeout is handled separately — never retried.
+                if result.is_timeout:
+                    break
+
+                # Check if error is retryable.
+                if result.is_error:
+                    do_retry, delay, reason = should_retry(
+                        result.error_message or "", attempt, retry_config,
+                    )
+                    if do_retry:
+                        logger.warning(
+                            "Retrying task %s: %s (delay=%.0fs)",
+                            task.task_id,
+                            reason,
+                            delay,
+                        )
+                        # Clear session_id for session errors.
+                        if classify_error(result.error_message or "") == "session":
+                            session_id = ""
+                        if delay > 0:
+                            time.sleep(delay)
+                        continue
+
+                # Success or non-retryable error — stop loop.
+                break
+
+            # Step 10: record result in circuit breaker (final outcome after retries).
+            assert result is not None  # loop always executes at least once
+            if result.is_error or result.is_timeout:
+                self._circuit_breaker.record_failure()
+            else:
+                self._circuit_breaker.record_success()
+
+            # Step 11: send final result via ProgressReporter.
             try:
                 elapsed = float(result.elapsed_seconds)
             except (TypeError, ValueError):
@@ -447,6 +500,7 @@ class Dispatcher:
             task: The task for routing the reply.
         """
         stats = self.get_stats()
+        cb_status = self._circuit_breaker.get_status()
         lines = [
             "*Bot Status*",
             f"Running tasks: {stats.get('running', 0)}",
@@ -454,6 +508,7 @@ class Dispatcher:
             f"Completed tasks: {stats.get('completed', 0)}",
             f"Failed tasks: {stats.get('failed', 0)}",
             f"Max concurrent: {stats.get('max_concurrent', 0)}",
+            f"Circuit breaker: {cb_status['state']} (failures: {cb_status['failure_count']}/{cb_status['threshold']})",
         ]
         self._slack.send_message(
             task.channel_id,

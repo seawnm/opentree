@@ -1104,3 +1104,476 @@ class TestRestartCommand:
         task = make_task(user_id="U_RANDOM")
         dispatcher._handle_admin_command(task, "restart")
         assert not shutdown_event.is_set()
+
+
+# ---------------------------------------------------------------------------
+# Retry integration — overloaded errors
+# ---------------------------------------------------------------------------
+
+class TestRetryOverloaded:
+    """Dispatcher retries on overloaded errors with exponential backoff."""
+
+    def _make_result(self, **kwargs):
+        result = MagicMock()
+        result.is_error = kwargs.get("is_error", False)
+        result.is_timeout = kwargs.get("is_timeout", False)
+        result.response_text = kwargs.get("response_text", "OK")
+        result.session_id = kwargs.get("session_id", "sess-001")
+        result.error_message = kwargs.get("error_message", "")
+        result.elapsed_seconds = kwargs.get("elapsed_seconds", 1.5)
+        result.input_tokens = kwargs.get("input_tokens", 100)
+        result.output_tokens = kwargs.get("output_tokens", 50)
+        return result
+
+    def test_retries_on_overloaded_then_succeeds(self, tmp_path):
+        """First call returns overloaded error, second call succeeds."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        error_result = self._make_result(
+            is_error=True,
+            error_message="API overloaded, try later",
+            response_text="",
+            session_id="",
+        )
+        success_result = self._make_result(
+            is_error=False,
+            response_text="Hello!",
+            session_id="sess-retry",
+        )
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+            patch("opentree.runner.dispatcher.time.sleep") as mock_sleep,
+            patch.object(dispatcher._task_queue, "mark_completed") as mock_complete,
+        ):
+            mock_instance = MagicMock()
+            mock_instance.run.side_effect = [error_result, success_result]
+            MockClaude.return_value = mock_instance
+            dispatcher._process_task(task)
+
+        # Claude should have been called twice (1 retry)
+        assert mock_instance.run.call_count == 2
+        # Backoff delay should have been applied
+        mock_sleep.assert_called_once()
+        assert mock_sleep.call_args[0][0] >= 29.0  # ~30s base delay
+        mock_complete.assert_called_once_with(task)
+
+    def test_retries_exhausted_marks_failed(self, tmp_path):
+        """After max retries, task is marked failed."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        error_result = self._make_result(
+            is_error=True,
+            error_message="overloaded error",
+            response_text="",
+            session_id="",
+        )
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+            patch("opentree.runner.dispatcher.time.sleep"),
+            patch.object(dispatcher._task_queue, "mark_failed") as mock_fail,
+            patch.object(dispatcher._task_queue, "mark_completed") as mock_complete,
+        ):
+            mock_instance = MagicMock()
+            mock_instance.run.return_value = error_result
+            MockClaude.return_value = mock_instance
+            dispatcher._process_task(task)
+
+        # 1 initial + 3 retries = 4 total calls
+        assert mock_instance.run.call_count == 4
+        mock_fail.assert_called_once_with(task)
+        mock_complete.assert_not_called()
+
+    def test_no_retry_for_non_retryable_error(self, tmp_path):
+        """Non-retryable errors fail immediately without retry."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        error_result = self._make_result(
+            is_error=True,
+            error_message="TypeError: cannot read property",
+            response_text="",
+            session_id="",
+        )
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+            patch("opentree.runner.dispatcher.time.sleep") as mock_sleep,
+            patch.object(dispatcher._task_queue, "mark_failed") as mock_fail,
+        ):
+            mock_instance = MagicMock()
+            mock_instance.run.return_value = error_result
+            MockClaude.return_value = mock_instance
+            dispatcher._process_task(task)
+
+        # Only 1 call — no retry
+        assert mock_instance.run.call_count == 1
+        mock_sleep.assert_not_called()
+        mock_fail.assert_called_once_with(task)
+
+
+# ---------------------------------------------------------------------------
+# Retry integration — session errors
+# ---------------------------------------------------------------------------
+
+class TestRetrySessionError:
+    """Dispatcher retries session errors once with cleared session_id."""
+
+    def _make_result(self, **kwargs):
+        result = MagicMock()
+        result.is_error = kwargs.get("is_error", False)
+        result.is_timeout = kwargs.get("is_timeout", False)
+        result.response_text = kwargs.get("response_text", "OK")
+        result.session_id = kwargs.get("session_id", "sess-001")
+        result.error_message = kwargs.get("error_message", "")
+        result.elapsed_seconds = kwargs.get("elapsed_seconds", 1.5)
+        result.input_tokens = kwargs.get("input_tokens", 100)
+        result.output_tokens = kwargs.get("output_tokens", 50)
+        return result
+
+    def test_session_error_clears_session_and_retries(self, tmp_path):
+        """session_error clears session_id and retries once."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task(thread_ts="session-thread")
+        task.status = TaskStatus.RUNNING
+
+        # Pre-set a session_id
+        dispatcher._session_mgr.set_session_id("session-thread", "old-session-id")
+
+        error_result = self._make_result(
+            is_error=True,
+            error_message="session_error: invalid state",
+            response_text="",
+            session_id="",
+        )
+        success_result = self._make_result(
+            is_error=False,
+            response_text="Recovered!",
+            session_id="new-session-id",
+        )
+
+        captured_session_ids = []
+
+        def capture_claude(**kwargs):
+            captured_session_ids.append(kwargs.get("session_id", ""))
+            m = MagicMock()
+            if len(captured_session_ids) == 1:
+                m.run.return_value = error_result
+            else:
+                m.run.return_value = success_result
+            return m
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess", side_effect=capture_claude),
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+            patch("opentree.runner.dispatcher.time.sleep") as mock_sleep,
+            patch.object(dispatcher._task_queue, "mark_completed") as mock_complete,
+        ):
+            dispatcher._process_task(task)
+
+        # Two calls: first with old session, second with cleared session
+        assert len(captured_session_ids) == 2
+        assert captured_session_ids[0] == "old-session-id"
+        assert captured_session_ids[1] == ""  # session cleared on retry
+        # No backoff delay for session errors
+        mock_sleep.assert_not_called()
+        mock_complete.assert_called_once_with(task)
+
+    def test_session_error_does_not_retry_twice(self, tmp_path):
+        """session_error retries only once; second failure is final."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        error_result = self._make_result(
+            is_error=True,
+            error_message="session_error: corrupted",
+            response_text="",
+            session_id="",
+        )
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+            patch("opentree.runner.dispatcher.time.sleep"),
+            patch.object(dispatcher._task_queue, "mark_failed") as mock_fail,
+        ):
+            mock_instance = MagicMock()
+            mock_instance.run.return_value = error_result
+            MockClaude.return_value = mock_instance
+            dispatcher._process_task(task)
+
+        # 1 initial + 1 retry = 2 total calls
+        assert mock_instance.run.call_count == 2
+        mock_fail.assert_called_once_with(task)
+
+
+# ---------------------------------------------------------------------------
+# Retry integration — timeout is not retried
+# ---------------------------------------------------------------------------
+
+class TestRetryTimeout:
+    """Timeouts are NOT retried — they are handled separately."""
+
+    def test_timeout_not_retried(self, tmp_path):
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        timeout_result = MagicMock()
+        timeout_result.is_error = False
+        timeout_result.is_timeout = True
+        timeout_result.response_text = ""
+        timeout_result.error_message = ""
+        timeout_result.session_id = ""
+        timeout_result.elapsed_seconds = 30.0
+        timeout_result.input_tokens = 0
+        timeout_result.output_tokens = 0
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+            patch("opentree.runner.dispatcher.time.sleep") as mock_sleep,
+            patch.object(dispatcher._task_queue, "mark_failed") as mock_fail,
+        ):
+            mock_instance = MagicMock()
+            mock_instance.run.return_value = timeout_result
+            MockClaude.return_value = mock_instance
+            dispatcher._process_task(task)
+
+        # Only 1 call — timeout is never retried
+        assert mock_instance.run.call_count == 1
+        mock_sleep.assert_not_called()
+        mock_fail.assert_called_once_with(task)
+
+
+# ---------------------------------------------------------------------------
+# Circuit Breaker integration
+# ---------------------------------------------------------------------------
+
+class TestCircuitBreakerIntegration:
+    """Circuit breaker integration with Dispatcher."""
+
+    def _make_result(self, **kwargs):
+        result = MagicMock()
+        result.is_error = kwargs.get("is_error", False)
+        result.is_timeout = kwargs.get("is_timeout", False)
+        result.response_text = kwargs.get("response_text", "OK")
+        result.session_id = kwargs.get("session_id", "sess-001")
+        result.error_message = kwargs.get("error_message", "")
+        result.elapsed_seconds = kwargs.get("elapsed_seconds", 1.5)
+        result.input_tokens = kwargs.get("input_tokens", 100)
+        result.output_tokens = kwargs.get("output_tokens", 50)
+        return result
+
+    def test_dispatcher_has_circuit_breaker(self, tmp_path):
+        """Dispatcher should initialise a CircuitBreaker instance."""
+        from opentree.runner.circuit_breaker import CircuitBreaker
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        assert isinstance(dispatcher._circuit_breaker, CircuitBreaker)
+
+    def test_dispatch_rejects_when_circuit_open(self, tmp_path):
+        """When circuit is OPEN, non-admin tasks are rejected immediately."""
+        from opentree.runner.circuit_breaker import CircuitBreakerConfig
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+
+        # Trip the circuit breaker
+        from opentree.runner.circuit_breaker import CircuitBreaker
+        dispatcher._circuit_breaker = CircuitBreaker(
+            CircuitBreakerConfig(failure_threshold=2)
+        )
+        dispatcher._circuit_breaker.record_failure()
+        dispatcher._circuit_breaker.record_failure()
+
+        task = make_task(text="hello")
+        process_called = []
+        dispatcher._process_task = lambda t: process_called.append(t)
+
+        with patch.object(dispatcher._task_queue, "submit", return_value=True):
+            dispatcher.dispatch(task)
+
+        import time; time.sleep(0.3)
+        # Task should NOT be processed
+        assert len(process_called) == 0
+        # Slack should have received the "unavailable" message
+        slack_api.send_message.assert_called()
+        msg = slack_api.send_message.call_args[0][1]
+        assert "unavailable" in msg.lower()
+
+    def test_admin_commands_bypass_circuit_breaker(self, tmp_path):
+        """Admin commands (status, help) should work even when circuit is OPEN."""
+        from opentree.runner.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+
+        # Trip the circuit breaker
+        dispatcher._circuit_breaker = CircuitBreaker(
+            CircuitBreakerConfig(failure_threshold=1)
+        )
+        dispatcher._circuit_breaker.record_failure()
+
+        task = make_task(text="<@UBOT123> status", message_ts="admin-ts-001")
+        dispatcher.dispatch(task)
+
+        # Status message should have been sent
+        slack_api.send_message.assert_called()
+        msg = slack_api.send_message.call_args[0][1]
+        assert "Bot Status" in msg
+
+    def test_success_records_in_circuit_breaker(self, tmp_path):
+        """Successful Claude result resets circuit breaker failure count."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        # Accumulate some failures first (but below threshold)
+        dispatcher._circuit_breaker.record_failure()
+        dispatcher._circuit_breaker.record_failure()
+
+        fake_result = self._make_result()
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+        ):
+            MockClaude.return_value.run.return_value = fake_result
+            dispatcher._process_task(task)
+
+        status = dispatcher._circuit_breaker.get_status()
+        assert status["failure_count"] == 0
+        assert status["state"] == "closed"
+
+    def test_failure_records_in_circuit_breaker(self, tmp_path):
+        """Failed Claude result increments circuit breaker failure count."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        fake_result = self._make_result(
+            is_error=True,
+            error_message="TypeError: something wrong",
+            response_text="",
+            session_id="",
+        )
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+            patch.object(dispatcher._task_queue, "mark_failed"),
+        ):
+            MockClaude.return_value.run.return_value = fake_result
+            dispatcher._process_task(task)
+
+        status = dispatcher._circuit_breaker.get_status()
+        assert status["failure_count"] == 1
+
+    def test_timeout_records_failure_in_circuit_breaker(self, tmp_path):
+        """Timeout result also counts as a circuit breaker failure."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        fake_result = self._make_result(
+            is_error=False,
+            is_timeout=True,
+            response_text="",
+            session_id="",
+            elapsed_seconds=30.0,
+            input_tokens=0,
+            output_tokens=0,
+        )
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+            patch("opentree.runner.dispatcher.time.sleep"),
+            patch.object(dispatcher._task_queue, "mark_failed"),
+        ):
+            MockClaude.return_value.run.return_value = fake_result
+            dispatcher._process_task(task)
+
+        status = dispatcher._circuit_breaker.get_status()
+        assert status["failure_count"] == 1
+
+    def test_status_includes_circuit_breaker(self, tmp_path):
+        """Status command output should include circuit breaker state."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        dispatcher._handle_status(task)
+
+        msg = slack_api.send_message.call_args[0][1]
+        assert "circuit breaker" in msg.lower()
+        assert "closed" in msg.lower()
+
+    def test_consecutive_failures_trip_circuit(self, tmp_path):
+        """After threshold consecutive failures, circuit opens and rejects."""
+        from opentree.runner.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+
+        # Low threshold for test
+        dispatcher._circuit_breaker = CircuitBreaker(
+            CircuitBreakerConfig(failure_threshold=2)
+        )
+
+        fake_result = self._make_result(
+            is_error=True,
+            error_message="TypeError: cannot compute",
+            response_text="",
+            session_id="",
+        )
+
+        for i in range(2):
+            task = make_task(
+                task_id=f"t{i}",
+                message_ts=f"ts-{i}",
+            )
+            task.status = TaskStatus.RUNNING
+            with (
+                patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+                patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+                patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+                patch("opentree.runner.dispatcher.cleanup_temp"),
+                patch.object(dispatcher._task_queue, "mark_failed"),
+            ):
+                MockClaude.return_value.run.return_value = fake_result
+                dispatcher._process_task(task)
+
+        # Now circuit should be OPEN
+        assert dispatcher._circuit_breaker.get_status()["state"] == "open"
+
+        # New dispatch should be rejected
+        new_task = make_task(message_ts="ts-new", text="hello")
+        process_called = []
+        dispatcher._process_task = lambda t: process_called.append(t)
+
+        with patch.object(dispatcher._task_queue, "submit", return_value=True):
+            dispatcher.dispatch(new_task)
+
+        import time; time.sleep(0.3)
+        assert len(process_called) == 0
