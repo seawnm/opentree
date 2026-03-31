@@ -388,6 +388,27 @@ class Dispatcher:
             if result.session_id:
                 self._session_mgr.set_session_id(task.thread_ts, result.session_id)
 
+            # Step 11b: extract and persist memories from the response.
+            if result.response_text:
+                try:
+                    from opentree.runner.memory_extractor import (
+                        append_to_memory_file,
+                        extract_memories,
+                    )
+
+                    memories = extract_memories(
+                        result.response_text,
+                        user_name=resolved_name,
+                        thread_ts=task.thread_ts,
+                    )
+                    if memories:
+                        memory_path = (
+                            self._home / "data" / "memory" / resolved_name / "memory.md"
+                        )
+                        append_to_memory_file(memory_path, memories)
+                except Exception as exc:
+                    logger.warning("Memory extraction failed: %s", exc)
+
             # Step 12: mark completed.
             self._task_queue.mark_completed(task)
 
