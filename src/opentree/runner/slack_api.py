@@ -12,6 +12,30 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def _extract_data(result) -> dict:
+    """Extract response data from a SlackResponse or dict.
+
+    slack_sdk's SlackResponse has a ``.data`` property that returns the
+    underlying dict. We also handle plain dicts for testing.
+
+    The SlackResponse object itself is NOT safely convertible via ``dict()``
+    because its ``__iter__`` yields paginated responses, not key-value pairs.
+    """
+    if isinstance(result, dict):
+        return result
+    # SlackResponse — access the .data property which returns a dict
+    try:
+        data = result.data
+        if isinstance(data, dict):
+            return data
+        logger.warning("_extract_data: result.data is %s, not dict", type(data).__name__)
+    except AttributeError:
+        pass
+    # No safe fallback — return empty dict rather than attempting dict(result)
+    # which would fail for SlackResponse objects.
+    return {}
+
+
 def _check_slack_sdk() -> None:
     """Raise ImportError with helpful message if slack_sdk is not installed."""
     try:
@@ -63,7 +87,7 @@ class SlackAPI:
         try:
             result = self._client.auth_test()
             # SlackResponse is dict-like; access .data for the raw dict
-            data = getattr(result, "data", result) if not isinstance(result, dict) else result
+            data = _extract_data(result)
             self._bot_user_id = data.get("user_id", "")
             return data
         except Exception as exc:
@@ -108,7 +132,7 @@ class SlackAPI:
             if thread_ts:
                 kwargs["thread_ts"] = thread_ts
             result = self._client.chat_postMessage(**kwargs)
-            return getattr(result, "data", result) if not isinstance(result, dict) else result
+            return _extract_data(result)
         except Exception as exc:
             logger.error("send_message failed (channel=%s): %s", channel, exc)
             return {}
@@ -138,7 +162,7 @@ class SlackAPI:
             if blocks is not None:
                 kwargs["blocks"] = blocks
             result = self._client.chat_update(**kwargs)
-            return getattr(result, "data", result) if not isinstance(result, dict) else result
+            return _extract_data(result)
         except Exception as exc:
             logger.error("update_message failed (channel=%s, ts=%s): %s", channel, ts, exc)
             return {}
@@ -169,7 +193,7 @@ class SlackAPI:
                 ts=thread_ts,
                 limit=limit,
             )
-            data = getattr(result, "data", result) if not isinstance(result, dict) else result
+            data = _extract_data(result)
             return data.get("messages", [])
         except Exception as exc:
             logger.error(
@@ -198,7 +222,7 @@ class SlackAPI:
 
         try:
             result = self._client.users_info(user=user_id)
-            data = getattr(result, "data", result) if not isinstance(result, dict) else result
+            data = _extract_data(result)
             user = data.get("user", {})
             profile = user.get("profile", {})
             name = profile.get("display_name", "")
@@ -222,7 +246,7 @@ class SlackAPI:
 
         try:
             result = self._client.conversations_info(channel=channel_id)
-            data = getattr(result, "data", result) if not isinstance(result, dict) else result
+            data = _extract_data(result)
             name = data.get("channel", {}).get("name", "")
             self._channel_cache[channel_id] = name
             return name
@@ -242,7 +266,7 @@ class SlackAPI:
         """
         try:
             result = self._client.team_info()
-            return getattr(result, "data", result) if not isinstance(result, dict) else result
+            return _extract_data(result)
         except Exception as exc:
             logger.error("get_team_info failed: %s", exc)
             return {}
@@ -288,7 +312,7 @@ class SlackAPI:
                 kwargs["initial_comment"] = comment
 
             result = self._client.files_upload_v2(**kwargs)
-            return getattr(result, "data", result) if not isinstance(result, dict) else result
+            return _extract_data(result)
         except Exception as exc:
             logger.error("upload_file failed (channel=%s, file=%s): %s", channel, file_path, exc)
             return {}

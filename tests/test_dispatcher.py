@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
+from opentree.runner.config import RunnerConfig
 from opentree.runner.task_queue import Task, TaskStatus
 
 
@@ -584,6 +585,46 @@ class TestAdminCommands:
         dispatcher._handle_admin_command(task, "unknown_cmd")
         # Should send at least something to Slack or silently ignore — not crash
         # (both behaviors are acceptable; just must not raise)
+
+    def test_shutdown_unauthorized_user(self, tmp_path):
+        """When admin_users is configured, non-admin user cannot shutdown."""
+        shutdown_event = threading.Event()
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        # Configure admin_users to only allow U_ADMIN
+        dispatcher._runner_config = RunnerConfig(admin_users=("U_ADMIN",))
+
+        task = make_task(user_id="U_RANDOM")
+        dispatcher._handle_admin_command(task, "shutdown")
+
+        # Shutdown event must NOT be set
+        assert not shutdown_event.is_set()
+        # Should send an unauthorized message to Slack
+        slack_api.send_message.assert_called()
+        msg_text = slack_api.send_message.call_args[0][1]
+        assert "authorized" in msg_text.lower() or "lock" in msg_text.lower()
+
+    def test_shutdown_authorized_user(self, tmp_path):
+        """When admin_users is configured, an authorized user CAN shutdown."""
+        shutdown_event = threading.Event()
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        dispatcher._runner_config = RunnerConfig(admin_users=("U_ADMIN", "U_SUPER"))
+
+        task = make_task(user_id="U_ADMIN")
+        dispatcher._handle_admin_command(task, "shutdown")
+
+        assert shutdown_event.is_set()
+
+    def test_shutdown_no_admin_list(self, tmp_path):
+        """When admin_users is empty (default), ANY user can shutdown (backward compat)."""
+        shutdown_event = threading.Event()
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        # Default RunnerConfig has admin_users=()
+        dispatcher._runner_config = RunnerConfig(admin_users=())
+
+        task = make_task(user_id="U_ANYONE")
+        dispatcher._handle_admin_command(task, "shutdown")
+
+        assert shutdown_event.is_set()
 
 
 # ---------------------------------------------------------------------------

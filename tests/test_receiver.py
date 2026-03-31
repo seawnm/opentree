@@ -419,6 +419,163 @@ class TestHandleMessage:
 
         assert path.exists()
 
+    def test_heartbeat_written_on_filtered_message(self, tmp_path):
+        """Heartbeat must be written even when the message is filtered out (e.g. bot_id).
+
+        Bug fix: previously heartbeat was only written after successful dispatch,
+        so filtered events (bot messages, non-DM channels) left the heartbeat stale.
+        """
+        path = tmp_path / "hb"
+        callback = MagicMock()
+        r = make_receiver(dispatch_callback=callback, heartbeat_path=path)
+
+        # Message with bot_id — should be filtered (not dispatched) but heartbeat written
+        ev = dm_event(text="bot message")
+        ev["bot_id"] = "B999"
+
+        r._handle_message(ev, say=MagicMock())
+
+        # Dispatch should NOT have been called (filtered out)
+        callback.assert_not_called()
+        # But heartbeat MUST have been written
+        assert path.exists()
+        content = path.read_text().strip()
+        assert content.isdigit()
+
+    def test_heartbeat_written_on_non_dm_channel_message(self, tmp_path):
+        """Heartbeat written even for non-DM channel messages that get filtered."""
+        path = tmp_path / "hb"
+        callback = MagicMock()
+        r = make_receiver(dispatch_callback=callback, heartbeat_path=path)
+
+        ev = {
+            "type": "message",
+            "ts": "3000.0001",
+            "user": "U001",
+            "channel": "C001",
+            "channel_type": "channel",
+            "text": "hello everyone",
+        }
+
+        r._handle_message(ev, say=MagicMock())
+
+        callback.assert_not_called()
+        assert path.exists()
+
+    def test_heartbeat_written_on_empty_text_message(self, tmp_path):
+        """Heartbeat written even for messages with empty text that get filtered."""
+        path = tmp_path / "hb"
+        callback = MagicMock()
+        r = make_receiver(dispatch_callback=callback, heartbeat_path=path)
+
+        ev = dm_event(text="")
+
+        r._handle_message(ev, say=MagicMock())
+
+        callback.assert_not_called()
+        assert path.exists()
+
+
+# ---------------------------------------------------------------------------
+# Bot-to-bot @mention handling
+# ---------------------------------------------------------------------------
+
+class TestBotToBotMention:
+    """Verify that messages from other bots with explicit @mention are dispatched."""
+
+    def test_bot_message_with_mention_dispatched(self):
+        """Other bot's message that @mentions this bot should be dispatched."""
+        callback = MagicMock()
+        r = make_receiver(dispatch_callback=callback, bot_user_id="UBOT123")
+
+        ev = {
+            "type": "message",
+            "ts": "5000.0001",
+            "user": "U_OTHER_BOT",
+            "channel": "C001",
+            "text": "<@UBOT123> status",
+            "bot_id": "B_OTHER",
+            "channel_type": "channel",
+        }
+        r._handle_message(ev, say=MagicMock())
+
+        callback.assert_called_once()
+        task = callback.call_args[0][0]
+        assert task.text == "<@UBOT123> status"
+
+    def test_bot_message_without_mention_filtered(self):
+        """Other bot's message WITHOUT @mention should be filtered."""
+        callback = MagicMock()
+        r = make_receiver(dispatch_callback=callback, bot_user_id="UBOT123")
+
+        ev = {
+            "type": "message",
+            "ts": "5000.0002",
+            "user": "U_OTHER_BOT",
+            "channel": "C001",
+            "text": "some bot chatter",
+            "bot_id": "B_OTHER",
+            "channel_type": "channel",
+        }
+        r._handle_message(ev, say=MagicMock())
+
+        callback.assert_not_called()
+
+    def test_bot_mention_in_thread_dispatched(self):
+        """Other bot's thread reply with @mention should be dispatched."""
+        callback = MagicMock()
+        r = make_receiver(dispatch_callback=callback, bot_user_id="UBOT123")
+
+        ev = {
+            "type": "message",
+            "ts": "5000.0003",
+            "user": "U_OTHER_BOT",
+            "channel": "C001",
+            "thread_ts": "4999.0001",
+            "text": "<@UBOT123> what was my previous message?",
+            "bot_id": "B_OTHER",
+            "channel_type": "channel",
+        }
+        r._handle_message(ev, say=MagicMock())
+
+        callback.assert_called_once()
+        task = callback.call_args[0][0]
+        assert task.thread_ts == "4999.0001"
+
+    def test_self_message_always_filtered(self):
+        """This bot's own messages must always be filtered, even with @mention."""
+        callback = MagicMock()
+        r = make_receiver(dispatch_callback=callback, bot_user_id="UBOT123")
+
+        ev = {
+            "type": "message",
+            "ts": "5000.0004",
+            "user": "UBOT123",  # self
+            "channel": "C001",
+            "text": "<@UBOT123> status",
+            "bot_id": "B_SELF",
+        }
+        r._handle_message(ev, say=MagicMock())
+
+        callback.assert_not_called()
+
+    def test_human_mention_in_channel_dispatched(self):
+        """Human @mention in a public channel should also be dispatched."""
+        callback = MagicMock()
+        r = make_receiver(dispatch_callback=callback, bot_user_id="UBOT123")
+
+        ev = {
+            "type": "message",
+            "ts": "5000.0005",
+            "user": "U_HUMAN",
+            "channel": "C001",
+            "text": "<@UBOT123> hello",
+            "channel_type": "channel",
+        }
+        r._handle_message(ev, say=MagicMock())
+
+        callback.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # start / stop

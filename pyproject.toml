@@ -22,6 +22,11 @@ opentree = "opentree.cli.main:app"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=opentree --cov-report=term-missing"
+markers = [
+    "e2e: end-to-end tests against live bot (requires running Bot_Walter)",
+    "slow: tests that take >60 seconds",
+    "destructive: tests that kill/restart the bot process",
+]
 
 [tool.coverage.run]
 source = ["src/opentree"]

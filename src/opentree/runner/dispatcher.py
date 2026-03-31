@@ -23,18 +23,20 @@ from opentree.runner.thread_context import build_thread_context
 
 logger = logging.getLogger(__name__)
 
-# Admin commands recognised by the dispatcher.
-_ADMIN_COMMANDS: frozenset[str] = frozenset({"status", "help", "shutdown"})
+# Bot commands recognised by the dispatcher.
+# "status" and "help" are public (available to all users).
+# "shutdown" requires admin authorization (see RunnerConfig.admin_users).
+_BOT_COMMANDS: frozenset[str] = frozenset({"status", "help", "shutdown"})
 
 # Matches a leading Slack user mention: <@UXXXXXXX>
 _MENTION_RE = re.compile(r"^<@[A-Z0-9]+>")
 
-# Help text shown in response to the "help" admin command.
+# Help text shown in response to the "help" bot command.
 _HELP_TEXT = (
-    "Available admin commands:\n"
+    "Available commands:\n"
     "  *status*   — show bot status and queue stats\n"
     "  *help*     — show this help message\n"
-    "  *shutdown* — gracefully stop the bot\n"
+    "  *shutdown* — gracefully stop the bot (admin only)\n"
 )
 
 
@@ -115,7 +117,7 @@ class Dispatcher:
 
         # Detect admin commands (exact match, case-insensitive).
         lower = cleaned.lower()
-        if lower in _ADMIN_COMMANDS:
+        if lower in _BOT_COMMANDS:
             return ParsedMessage(
                 text=cleaned,
                 is_admin_command=True,
@@ -395,6 +397,16 @@ class Dispatcher:
         elif command == "help":
             self._handle_help(task)
         elif command == "shutdown":
+            if (
+                self._runner_config.admin_users
+                and task.user_id not in self._runner_config.admin_users
+            ):
+                self._slack.send_message(
+                    task.channel_id,
+                    ":lock: Only authorized admins can use the shutdown command.",
+                    thread_ts=task.thread_ts,
+                )
+                return
             self._handle_shutdown(task)
         else:
             logger.warning("Unknown admin command: %s", command)

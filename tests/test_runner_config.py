@@ -314,3 +314,52 @@ class TestRunnerConfigDirectInstantiation:
         assert "max_concurrent_tasks" in fields
         assert "session_expiry_days" in fields
         assert "drain_timeout" in fields
+        assert "admin_users" in fields
+
+
+class TestAdminUsers:
+    """Tests for admin_users field on RunnerConfig."""
+
+    def test_admin_users_default_empty(self) -> None:
+        """Default admin_users is an empty tuple (backward compat: all users are admins)."""
+        config = RunnerConfig()
+        assert config.admin_users == ()
+
+    def test_admin_users_from_json(self, tmp_path: Path) -> None:
+        """admin_users loaded from runner.json as a tuple."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "runner.json").write_text(
+            json.dumps({"admin_users": ["U001", "U002"]}),
+            encoding="utf-8",
+        )
+
+        result = load_runner_config(tmp_path)
+
+        assert result.admin_users == ("U001", "U002")
+
+    def test_admin_users_empty_list_from_json(self, tmp_path: Path) -> None:
+        """Empty admin_users list in JSON results in empty tuple."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "runner.json").write_text(
+            json.dumps({"admin_users": []}),
+            encoding="utf-8",
+        )
+
+        result = load_runner_config(tmp_path)
+
+        assert result.admin_users == ()
+
+    def test_admin_users_missing_from_json_defaults_empty(self, tmp_path: Path) -> None:
+        """When admin_users is not in JSON, defaults to empty tuple."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "runner.json").write_text(
+            json.dumps({"task_timeout": 600}),
+            encoding="utf-8",
+        )
+
+        result = load_runner_config(tmp_path)
+
+        assert result.admin_users == ()

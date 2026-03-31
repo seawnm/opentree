@@ -76,6 +76,90 @@ def api(mock_slack_sdk):
 
 
 # ---------------------------------------------------------------------------
+# 0. test_extract_data helper
+# ---------------------------------------------------------------------------
+
+class TestExtractData:
+    """_extract_data() robustly extracts a dict from various response types."""
+
+    def test_plain_dict_returns_dict(self, mock_slack_sdk):
+        from opentree.runner.slack_api import _extract_data
+
+        d = {"ok": True, "user_id": "U123"}
+        assert _extract_data(d) == d
+
+    def test_object_with_data_property_returning_dict(self, mock_slack_sdk):
+        from opentree.runner.slack_api import _extract_data
+
+        class FakeResponse:
+            @property
+            def data(self):
+                return {"ok": True, "team": "T1"}
+
+        result = _extract_data(FakeResponse())
+        assert result == {"ok": True, "team": "T1"}
+
+    def test_object_with_data_property_returning_non_dict_returns_empty(self, mock_slack_sdk):
+        """If .data returns a non-dict (e.g. a string), return empty dict safely."""
+        from opentree.runner.slack_api import _extract_data
+
+        class WeirdResponse:
+            @property
+            def data(self):
+                return "not-a-dict"
+
+        result = _extract_data(WeirdResponse())
+        assert result == {}
+
+    def test_object_without_data_returns_empty(self, mock_slack_sdk):
+        """Object with no .data attribute returns empty dict."""
+        from opentree.runner.slack_api import _extract_data
+
+        class NoData:
+            pass
+
+        result = _extract_data(NoData())
+        assert result == {}
+
+    def test_object_that_fails_dict_returns_empty(self, mock_slack_sdk):
+        """Object with no .data and no dict() support returns {}."""
+        from opentree.runner.slack_api import _extract_data
+
+        class Opaque:
+            pass
+
+        result = _extract_data(Opaque())
+        assert result == {}
+
+    def test_empty_dict_returns_empty_dict(self, mock_slack_sdk):
+        from opentree.runner.slack_api import _extract_data
+
+        assert _extract_data({}) == {}
+
+    def test_slack_response_like_object(self, mock_slack_sdk):
+        """Simulate a real SlackResponse that has .data returning a dict."""
+        from opentree.runner.slack_api import _extract_data
+
+        class SlackResponseMock:
+            def __init__(self, payload: dict):
+                self._payload = payload
+
+            @property
+            def data(self) -> dict:
+                return self._payload
+
+            def __getitem__(self, key):
+                return self._payload[key]
+
+            def __iter__(self):
+                return iter(self._payload)
+
+        resp = SlackResponseMock({"ok": True, "user_id": "UBOT", "team_id": "T99"})
+        result = _extract_data(resp)
+        assert result == {"ok": True, "user_id": "UBOT", "team_id": "T99"}
+
+
+# ---------------------------------------------------------------------------
 # 1. test_check_slack_sdk_missing
 # ---------------------------------------------------------------------------
 

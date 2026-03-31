@@ -135,18 +135,26 @@ class Receiver:
         self._write_heartbeat()
 
     def _handle_message(self, event: dict, say: Callable) -> None:
-        """Handle DM and thread reply message events.
+        """Handle DM, thread reply, and bot-to-bot @mention events.
+
+        Accepts:
+        - Direct messages (channel_type == "im") from humans.
+        - Messages from other bots that explicitly @mention this bot
+          (Slack does not fire ``app_mention`` for bot-originated messages).
 
         Ignores:
-        - Messages from the bot itself (``bot_id`` present or ``user`` == bot_user_id).
+        - Messages from this bot itself (prevents self-loop).
         - Messages with no text.
-        - Non-DM channel messages (only DMs are accepted here; @mentions arrive
-          via ``app_mention``).
+        - Non-DM channel messages without an explicit @mention of this bot.
         - Duplicate message timestamps.
         """
-        # Ignore bot's own messages
-        if event.get("bot_id"):
-            return
+        # Always refresh heartbeat on any received event, even if the
+        # message will be filtered out below.  This prevents the watchdog
+        # from killing the bot during quiet periods when only bot traffic
+        # or non-DM channel messages are arriving.
+        self._write_heartbeat()
+
+        # Ignore this bot's OWN messages (prevent self-loop)
         if event.get("user") == self._bot_user_id:
             return
 
@@ -155,11 +163,22 @@ class Receiver:
         if not text:
             return
 
-        # Only process DMs in this handler; public-channel mentions come via
-        # app_mention. Non-DM messages without a bot mention are ignored.
-        channel_type = event.get("channel_type", "")
-        if channel_type != "im":
-            return
+        # Check if this bot is explicitly @mentioned in the message text.
+        # Slack does NOT fire app_mention for bot-originated messages, so
+        # other bots that @mention us arrive here as regular messages.
+        has_bot_mention = f"<@{self._bot_user_id}>" in text
+
+        # For messages from other bots: only process if they @mention us.
+        if event.get("bot_id"):
+            if not has_bot_mention:
+                return
+            # Bot @mentioned us — process it (fall through to dispatch).
+
+        # For human messages: accept DMs or explicit @mentions.
+        elif not has_bot_mention:
+            channel_type = event.get("channel_type", "")
+            if channel_type != "im":
+                return
 
         ts = event.get("ts", "")
         if self._is_duplicate(ts):
@@ -168,7 +187,7 @@ class Receiver:
 
         task = self._build_task(event)
         self._dispatch(task)
-        self._write_heartbeat()
+        # Heartbeat already written at top of method; no redundant write.
 
     # ------------------------------------------------------------------
     # Private: helpers

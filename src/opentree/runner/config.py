@@ -27,6 +27,9 @@ class RunnerConfig:
         max_concurrent_tasks: Maximum number of parallel tasks.
         session_expiry_days: Number of days before a session expires.
         drain_timeout: Graceful shutdown drain timeout, in seconds.
+        admin_users: Slack user IDs allowed to run admin commands like
+            ``shutdown``.  Empty tuple means all users are admins
+            (backward-compatible default).
     """
 
     progress_interval: int = 10
@@ -36,6 +39,7 @@ class RunnerConfig:
     max_concurrent_tasks: int = 2
     session_expiry_days: int = 180
     drain_timeout: int = 30
+    admin_users: tuple[str, ...] = ()
 
 
 def _validate(data: dict) -> None:
@@ -59,6 +63,13 @@ def _validate(data: dict) -> None:
             raise ValueError(
                 f"RunnerConfig: '{field}' must be > 0, got {data[field]}"
             )
+
+    if "admin_users" in data:
+        for uid in data["admin_users"]:
+            if not isinstance(uid, str) or not uid.strip():
+                raise ValueError(
+                    f"RunnerConfig: 'admin_users' entries must be non-empty strings, got {uid!r}"
+                )
 
     if "max_concurrent_tasks" in data and data["max_concurrent_tasks"] < 1:
         raise ValueError(
@@ -108,4 +119,5 @@ def load_runner_config(opentree_home: Path) -> RunnerConfig:
         max_concurrent_tasks=data.get("max_concurrent_tasks", 2),
         session_expiry_days=data.get("session_expiry_days", 180),
         drain_timeout=data.get("drain_timeout", 30),
+        admin_users=tuple(data.get("admin_users", ())),
     )
