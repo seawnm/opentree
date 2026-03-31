@@ -221,15 +221,16 @@ class TestBuildClaudeArgs:
         assert "--verbose" in args
         assert "--system-prompt" in args
         assert "sys" in args
-        assert "--cwd" in args
-        assert "/work" in args
+        # cwd is passed to Popen, not as a CLI flag
+        assert "--cwd" not in args
 
-    def test_max_turns_always_present(self):
+    def test_max_turns_not_present(self):
         from opentree.runner.claude_process import _build_claude_args
 
         config = _make_config()
         args = _build_claude_args(config, system_prompt="s", cwd="/c")
-        assert "--max-turns" in args
+        # --max-turns is not a valid Claude CLI option
+        assert "--max-turns" not in args
 
     def test_with_session_id_adds_resume(self):
         from opentree.runner.claude_process import _build_claude_args
@@ -247,21 +248,23 @@ class TestBuildClaudeArgs:
         args = _build_claude_args(config, system_prompt="s", cwd="/c")
         assert "--resume" not in args
 
-    def test_with_message_adds_message_flag(self):
+    def test_with_message_adds_positional_arg(self):
         from opentree.runner.claude_process import _build_claude_args
 
         config = _make_config()
         args = _build_claude_args(config, system_prompt="s", cwd="/c", message="Hello!")
-        assert "--message" in args
-        idx = args.index("--message")
-        assert args[idx + 1] == "Hello!"
+        # Message is a positional argument, not a --message flag
+        assert "--message" not in args
+        assert args[-1] == "Hello!"
 
-    def test_without_message_no_message_flag(self):
+    def test_without_message_no_message_in_args(self):
         from opentree.runner.claude_process import _build_claude_args
 
         config = _make_config()
         args = _build_claude_args(config, system_prompt="s", cwd="/c")
         assert "--message" not in args
+        # No extra positional arg appended
+        assert "Hello!" not in args
 
     def test_custom_claude_command(self):
         from opentree.runner.claude_process import _build_claude_args
@@ -288,7 +291,9 @@ class TestBuildClaudeArgs:
             session_id="sess-1", message="continue"
         )
         assert "--resume" in args
-        assert "--message" in args
+        # Message is appended as positional arg, not --message flag
+        assert "--message" not in args
+        assert args[-1] == "continue"
 
     def test_empty_session_id_no_resume(self):
         from opentree.runner.claude_process import _build_claude_args
@@ -441,8 +446,10 @@ class TestClaudeProcessRunSuccess:
         cmd = call_args[0][0] if call_args[0] else call_args.kwargs.get("args", [])
         assert "--system-prompt" in cmd
         assert "Be helpful" in cmd
-        assert "--cwd" in cmd
-        assert "/my/workspace" in cmd
+        # cwd is passed as a Popen kwarg, not a CLI flag
+        assert "--cwd" not in cmd
+        call_kwargs = call_args[1] if call_args[1] else {}
+        assert call_kwargs.get("cwd") == "/my/workspace"
 
     def test_run_uses_safe_env(self):
         from opentree.runner.claude_process import ClaudeProcess

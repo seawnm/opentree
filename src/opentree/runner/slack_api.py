@@ -62,8 +62,8 @@ class SlackAPI:
         """
         try:
             result = self._client.auth_test()
-            # result may be a SlackResponse (dict-like) or a plain dict
-            data = dict(result) if not isinstance(result, dict) else result
+            # SlackResponse is dict-like; access .data for the raw dict
+            data = getattr(result, "data", result) if not isinstance(result, dict) else result
             self._bot_user_id = data.get("user_id", "")
             return data
         except Exception as exc:
@@ -108,7 +108,7 @@ class SlackAPI:
             if thread_ts:
                 kwargs["thread_ts"] = thread_ts
             result = self._client.chat_postMessage(**kwargs)
-            return dict(result) if not isinstance(result, dict) else result
+            return getattr(result, "data", result) if not isinstance(result, dict) else result
         except Exception as exc:
             logger.error("send_message failed (channel=%s): %s", channel, exc)
             return {}
@@ -138,7 +138,7 @@ class SlackAPI:
             if blocks is not None:
                 kwargs["blocks"] = blocks
             result = self._client.chat_update(**kwargs)
-            return dict(result) if not isinstance(result, dict) else result
+            return getattr(result, "data", result) if not isinstance(result, dict) else result
         except Exception as exc:
             logger.error("update_message failed (channel=%s, ts=%s): %s", channel, ts, exc)
             return {}
@@ -169,7 +169,7 @@ class SlackAPI:
                 ts=thread_ts,
                 limit=limit,
             )
-            data = dict(result) if not isinstance(result, dict) else result
+            data = getattr(result, "data", result) if not isinstance(result, dict) else result
             return data.get("messages", [])
         except Exception as exc:
             logger.error(
@@ -198,7 +198,7 @@ class SlackAPI:
 
         try:
             result = self._client.users_info(user=user_id)
-            data = dict(result) if not isinstance(result, dict) else result
+            data = getattr(result, "data", result) if not isinstance(result, dict) else result
             user = data.get("user", {})
             profile = user.get("profile", {})
             name = profile.get("display_name", "")
@@ -222,7 +222,7 @@ class SlackAPI:
 
         try:
             result = self._client.conversations_info(channel=channel_id)
-            data = dict(result) if not isinstance(result, dict) else result
+            data = getattr(result, "data", result) if not isinstance(result, dict) else result
             name = data.get("channel", {}).get("name", "")
             self._channel_cache[channel_id] = name
             return name
@@ -242,7 +242,7 @@ class SlackAPI:
         """
         try:
             result = self._client.team_info()
-            return dict(result) if not isinstance(result, dict) else result
+            return getattr(result, "data", result) if not isinstance(result, dict) else result
         except Exception as exc:
             logger.error("get_team_info failed: %s", exc)
             return {}
@@ -288,7 +288,7 @@ class SlackAPI:
                 kwargs["initial_comment"] = comment
 
             result = self._client.files_upload_v2(**kwargs)
-            return dict(result) if not isinstance(result, dict) else result
+            return getattr(result, "data", result) if not isinstance(result, dict) else result
         except Exception as exc:
             logger.error("upload_file failed (channel=%s, file=%s): %s", channel, file_path, exc)
             return {}

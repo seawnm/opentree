@@ -109,9 +109,10 @@ def _build_claude_args(
     Args:
         config: Runner configuration.
         system_prompt: System prompt to inject via ``--system-prompt``.
-        cwd: Working directory passed to Claude via ``--cwd``.
+        cwd: Working directory; passed to :class:`subprocess.Popen` as ``cwd``,
+            not as a CLI flag (``--cwd`` is not a valid Claude CLI option).
         session_id: If non-empty, adds ``--resume <session_id>``.
-        message: If non-empty, adds ``--message <message>`` (batch mode).
+        message: If non-empty, appended as a positional argument (batch mode).
 
     Returns:
         A list of strings ready for :class:`subprocess.Popen`.
@@ -123,17 +124,14 @@ def _build_claude_args(
         "--verbose",
         "--system-prompt",
         system_prompt,
-        "--cwd",
-        cwd,
-        "--max-turns",
-        "50",
+        "--print",
     ]
 
     if session_id:
         args += ["--resume", session_id]
 
     if message:
-        args += ["--message", message]
+        args.append(message)
 
     return args
 
@@ -212,6 +210,7 @@ class ClaudeProcess:
                 env=env,
                 text=True,
                 bufsize=1,
+                cwd=self._cwd,  # Set working directory via Popen, not CLI flag
             )
         except Exception as exc:
             logger.error("Failed to spawn Claude CLI: %s", exc)
