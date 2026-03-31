@@ -569,4 +569,39 @@ openspec/changes/20260330-slack-bot-runner/simulation-report.md
 openspec/changes/20260331-e2e-verification/simulation-report.md
 openspec/changes/20260331-e2e-verification/review-log.md
 openspec/changes/20260331-e2e-verification/test-plan.md
+openspec/changes/20260401-phase4-advanced/proposal.md
+openspec/changes/20260401-phase4-advanced/research.md
+openspec/changes/20260401-session-handoff/handoff.md
 ```
+
+---
+
+## 十一、P2 Simulation Issues + Phase 4 進階功能（2026-04-01）
+
+### P2 Simulation Issues（commit 6d0969c）
+- prompt_hook 快取：PromptHookCache 載入一次，消除 exec_module 重複呼叫
+- PlaceholderEngine escape：re.sub 單次掃描，未知 {{...}} 原樣保留
+- 磁碟空間監控：health.py + 啟動時/每小時檢查 + WARNING threshold
+- exec_module 記憶體累積：由 PromptHookCache 一併解決
+
+### Phase 4 進階功能
+
+| Feature | Commit | Tests | Coverage |
+|---------|--------|-------|----------|
+| Retry 機制 | 3519e40 | +36 | 100% |
+| Circuit Breaker | 3519e40 | +38 | 100% |
+| Tool Tracker | 0d266f9 | +41 | 100% |
+| Memory Extractor | 65e0dab | +42 | 98% |
+
+### Agent 交互歷程
+- ~30 agent 呼叫（explore, planner, flow-simulator, tdd, code-reviewer, general-purpose）
+- 關鍵發現：Slack 不為 bot 觸發 app_mention、slack_bolt 多 thread race condition、WSL2 bytecache 不一致
+- 關鍵決策：單一 handler 架構（移除 app_mention）、雙層 dedup、啟發式記憶萃取（不用 LLM）
+
+### 最終數據
+- 總 commits：25（含 docs）
+- 測試：1044 passed, 1 xfailed, 93% coverage
+- Runner 程式碼：~4,500 行（19 .py + 1 .sh）
+- Bug 修復：16 個
+- 新功能：11 個
+- OpenSpec 文件：12 份

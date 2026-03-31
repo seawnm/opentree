@@ -192,8 +192,10 @@
 
 ## 下一個 Session 的建議起始點
 
-> v0.2.0 已發布，P0 和 P1 全部完成。
+> v0.2.0 已發布，P0/P1/P2 全部完成，Phase 4 進階功能全部完成。
 
-1. **bot_walter 正式部署**（systemd / screen / nohup 持久化）
-2. **Phase 4 進階功能**（Tool Tracker、Retry、Circuit Breaker）
-3. 若時間充裕，處理 P2 的 Simulation Issues（prompt_hook 快取、磁碟空間監控等）
+1. **v0.3.0 發布**（Phase 4 features 構成新 minor release）
+2. **opentree module update 指令**（模組版本升級流程）
+3. **Bot Walter 正式部署**（systemd/screen 持久化 + log rotation 驗證）
+4. **LOW issues**（run.sh log、sleep 引號、重複 startup log、test logger fixture）
+5. **DOGI 遷移評估**（991 行 CLAUDE.md → OpenTree 模組化）
