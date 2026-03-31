@@ -11,6 +11,9 @@
 ### Added
 - Disk space health monitoring (`health.py`) with hourly checks and WARNING threshold
 - `PromptHookCache` class for thread-safe hook callable caching
+- **Retry mechanism** (`retry.py`): exponential backoff for overloaded errors, session clear for session errors
+- **Circuit Breaker** (`circuit_breaker.py`): CLOSED→OPEN→HALF_OPEN state machine, 5-failure threshold
+- **Tool Tracker** (`tool_tracker.py`): tracks tool usage + duration, displays timeline in completion message
 
 ## [0.2.0] - 2026-03-31
 
