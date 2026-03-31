@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-31
+
 ### Added
 - E2E verification complete: status, help, Claude reply, multi-turn context, concurrent requests, crash recovery
 - **Slack Bot Runner** (`src/opentree/runner/`): 獨立的 Slack bot runtime，不依賴 DOGI 程式碼
