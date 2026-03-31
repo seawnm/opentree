@@ -148,11 +148,11 @@
 
 ## P2 — 中期
 
-### Phase 4 進階功能 — 3/4 完成（commits `3519e40`, `0d266f9`，+144 tests）
+### Phase 4 進階功能 — ✅ 全部完成（commits `3519e40`, `0d266f9`, `65e0dab`，+186 tests）
 - [x] **Retry 機制**：overloaded_error 指數退避 (30/60/120s)、session_error 清除 session 重試 ✅
 - [x] **Circuit Breaker**：CLOSED→OPEN(5 failures)→HALF_OPEN(60s)→CLOSED，status 顯示 ✅
 - [x] **Tool Tracker + Timeline**：追蹤工具名稱/耗時、completion message 含 timeline ✅
-- [ ] **Memory Extractor**：對話結束後自動萃取記憶（待辦，規模較大需獨立 session）
+- [x] **Memory Extractor**：正則啟發式萃取 (EN/ZH)、auto-persist to memory.md（commit `65e0dab`）✅
 
 ### opentree module update 指令
 - [ ] 模組版本升級流程（比對 bundled vs installed 版本，選擇性升級）

@@ -14,6 +14,7 @@
 - **Retry mechanism** (`retry.py`): exponential backoff for overloaded errors, session clear for session errors
 - **Circuit Breaker** (`circuit_breaker.py`): CLOSED→OPEN→HALF_OPEN state machine, 5-failure threshold
 - **Tool Tracker** (`tool_tracker.py`): tracks tool usage + duration, displays timeline in completion message
+- **Memory Extractor** (`memory_extractor.py`): heuristic extraction of memorable content (EN/ZH patterns), auto-persist to user memory file
 
 ## [0.2.0] - 2026-03-31
 
