@@ -10,7 +10,9 @@
 
 31 scenarios simulated against the Bot Runner codebase after Phase 1-3 implementation and compliance fixes. Tests covered admin commands, Claude reply flow, thread resume, dedup, heartbeat, bot-to-bot interaction, and DM.
 
-**Results: 21 pass / 10 fail**
+**Simulation Results: 21 pass / 10 fail (all 10 fixed)**
+**E2E Results: 7 pass / 1 skipped + CLAUDE_CONFIG_DIR PASS + 7 P1 MEDIUM fixes (commit 75e1181)**
+**Final: v0.2.0 released — 858 tests, 93% coverage**
 
 ---
 
@@ -138,11 +140,29 @@
 | run.sh crash recovery (A6) | SIGTERM → graceful shutdown (exit 0, no restart); SIGKILL → exit 137 → wrapper auto-restart | PASS | New PID (31864→32196), bot re-authenticated, watchdog PID also restarted |
 | DM messages (A3) | DOGI message-tool → Bot Walter DM | SKIPPED | message-tool cannot send DMs to Bot Walter |
 
+### CLAUDE_CONFIG_DIR Verification (P0 Blocker)
+
+| Test | Scenario | Result | Notes |
+|------|----------|--------|-------|
+| CLAUDE_CONFIG_DIR (A1) | Files isolated to config dir, sessions isolated, settings.json respected | PASS | All 4 verification items checked. Credentials require manual copy to config dir. |
+
+### P1 MEDIUM Fixes (commit 75e1181, +34 tests)
+
+| Test | Fix | Result | Notes |
+|------|-----|--------|-------|
+| Long message truncation | Slack 4,000 char limit | PASS | Truncation + multi-part sending |
+| host fallback | `getent hosts` + `ping -c1` | PASS | Works in minimal containers |
+| .env placeholder sentinel | Reject `xoxb-your-bot-token` etc. | PASS | Sentinel check in `_load_tokens()` |
+| exit 42 / restart command | Update-restart mechanism | PASS | run.sh distinguishes restart vs shutdown |
+| init --force warning | Interactive confirmation | PASS | User warned before directory removal |
+| init transactional install | Rollback on partial failure | PASS | Cleanup of partial installs |
+| log_dir readonly fallback | stderr fallback | PASS | Graceful degradation when log_dir unwritable |
+
 ### Not Tested (Remaining)
 
 | Test | Reason |
 |------|--------|
-| File upload | Not yet tested |
+| File upload | Deferred to P2 |
 
 ---
 

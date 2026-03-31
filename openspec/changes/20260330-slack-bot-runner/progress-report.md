@@ -265,6 +265,45 @@ E2E 驗證階段共約 8 次 agent 調用：
 | `72ecc6c` | fix: cross-handler dedup — single handler + Layer 2 dispatcher dedup |
 | `0fa88d8` | test: E2E Batch 3 — multi-turn context, concurrent requests, crash recovery |
 
+### CLAUDE_CONFIG_DIR 驗證（PASS）
+
+P0 阻擋部署的最後一項：驗證 Claude CLI 是否正確尊重 `CLAUDE_CONFIG_DIR` 環境變數。
+
+| 驗證項目 | 結果 |
+|----------|------|
+| Claude CLI 啟動時尊重 `CLAUDE_CONFIG_DIR` | PASS |
+| 多 bot instance 不同 config dir 互不干擾 | PASS |
+| session 資料寫入指定路徑 | PASS |
+| settings.json 在指定 config dir 被正確讀取 | PASS |
+
+**備註**：credentials 隔離需手動複製（Claude CLI 不自動隔離 credentials 到 config dir）。
+
+### P1 MEDIUM 修復（commit `75e1181`，+34 tests）
+
+完成所有 P1 MEDIUM issues（7 項），涵蓋 Phase 2+3 Simulation 和 Code Review 遺留問題：
+
+| # | Issue | 修復方式 |
+|---|-------|----------|
+| 1 | 超長訊息不截斷 | Slack 4,000 字元上限截斷 + 分段發送 |
+| 2 | `host` 指令容器不可用 | `getent hosts` + `ping -c1` fallback chain |
+| 3 | `.env` placeholder 通過驗證 | sentinel 檢查攔截佔位符 |
+| 4 | exit 42 / restart command | 更新重啟以 exit code 42 退出 + restart admin command |
+| 5 | `init --force` 覆寫使用者目錄 | interactive confirmation 警告 |
+| 6 | init 模組安裝不是 transactional | 失敗時 rollback 已安裝模組 |
+| 7 | `log_dir` 唯讀無 fallback | stderr fallback 機制 |
+
+### 版本發布 v0.2.0
+
+- `pyproject.toml` version 更新為 `0.2.0`
+- CHANGELOG `[Unreleased]` 移至 `[0.2.0] - 2026-03-31`
+- Git tag `v0.2.0`
+
+### 測試統計（最終）
+
+- **總測試數**：858（+34 from P1 MEDIUM fixes）
+- **整體覆蓋率**：93%
+- **E2E 場景**：7 PASS / 1 SKIPPED
+
 ---
 
 ## 六、E2E 實機測試（早期）
@@ -404,8 +443,11 @@ Claude CLI 實際上不支援以下參數：
 | `82eec96` | **fix: E2E 驗證 — SlackAPI parsing + bot-to-bot mention + shutdown auth + heartbeat** | — |
 | `54db6cc` | **fix: 移除 dispatcher 冗餘 heartbeat write** | — |
 | `72ecc6c` | **fix: cross-handler dedup — single handler + Layer 2 dispatcher dedup** | — |
+| `0fa88d8` | **test: E2E Batch 3 — multi-turn context, concurrent requests, crash recovery** | — |
+| `75e1181` | **fix: P1 MEDIUM — 超長訊息截斷 + host fallback + .env sentinel + exit 42 + init 安全 + log fallback** | +34 tests |
 
-> **Bot Runner 相關**（`460849d` ~ `72ecc6c`）：9 commits
+> **Bot Runner 相關**（`460849d` ~ `75e1181`）：11 commits
+> **v0.2.0 released**: 2026-03-31
 
 ---
 
