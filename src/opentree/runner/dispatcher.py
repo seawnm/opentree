@@ -21,8 +21,10 @@ from opentree.runner.file_handler import build_file_context, cleanup_temp, downl
 from opentree.runner.progress import ProgressReporter, build_completion_blocks
 from opentree.runner.session import SessionManager
 from opentree.runner.slack_api import SlackAPI
+from opentree.runner.stream_parser import Phase
 from opentree.runner.task_queue import Task, TaskQueue, TaskStatus
 from opentree.runner.thread_context import build_thread_context
+from opentree.runner.tool_tracker import ToolTracker
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +241,18 @@ class Dispatcher:
             interval=self._runner_config.progress_interval,
         )
 
+        # Tool tracker — records tool invocations for timeline display.
+        tracker = ToolTracker()
+
+        def _tracking_callback(state) -> None:
+            """Progress callback that also feeds the tool tracker."""
+            if state.phase == Phase.TOOL_USE:
+                tracker.start_tool(state.tool_name, state.tool_input_preview)
+            elif tracker._current is not None:
+                # Phase left TOOL_USE — close the open tool.
+                tracker.end_tool()
+            reporter.update(state)
+
         try:
             # Step 1: send initial ack via ProgressReporter.
             reporter.start()
@@ -292,7 +306,7 @@ class Dispatcher:
                     cwd=self._workspace_dir,
                     session_id=session_id,
                     message=message,
-                    progress_callback=reporter.update,
+                    progress_callback=_tracking_callback,
                 )
                 result = claude.run()
 
@@ -322,12 +336,16 @@ class Dispatcher:
                 # Success or non-retryable error — stop loop.
                 break
 
-            # Step 10: record result in circuit breaker (final outcome after retries).
+            # Step 10: finalize tool tracker and record circuit breaker result.
+            tracker.finish()
             assert result is not None  # loop always executes at least once
             if result.is_error or result.is_timeout:
                 self._circuit_breaker.record_failure()
             else:
                 self._circuit_breaker.record_success()
+
+            # Build tool timeline string for the completion message.
+            tool_timeline = tracker.build_timeline()
 
             # Step 11: send final result via ProgressReporter.
             try:
@@ -359,6 +377,7 @@ class Dispatcher:
                 output_tokens=output_tokens,
                 is_error=result.is_error,
                 error_message=result.error_message or "",
+                tool_timeline=tool_timeline,
             )
 
             if result.is_error:

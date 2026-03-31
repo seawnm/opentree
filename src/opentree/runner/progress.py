@@ -85,6 +85,7 @@ def build_completion_blocks(
     output_tokens: int = 0,
     is_error: bool = False,
     error_message: str = "",
+    tool_timeline: str = "",
 ) -> list[dict]:
     """Build Block Kit blocks for the final response.
 
@@ -93,6 +94,15 @@ def build_completion_blocks(
       12 000 chars a "(truncated)" indicator is appended.
     - Error: error message with :x: prefix (single section, truncated at 3000).
     - Empty response: warning indicator.
+
+    Args:
+        response_text: The final response text from Claude.
+        elapsed: Elapsed wall-clock seconds.
+        input_tokens: Input token count (0 = not reported).
+        output_tokens: Output token count (0 = not reported).
+        is_error: Whether the result is an error.
+        error_message: Error description (used when is_error is True).
+        tool_timeline: Optional tool usage timeline string to display.
     """
     if is_error:
         text = f":x: *Error*\n{error_message or 'An error occurred.'}"
@@ -111,6 +121,15 @@ def build_completion_blocks(
         ]
     else:
         blocks = _split_text_into_sections(response_text)
+
+    # Tool timeline (only on success when tools were used)
+    if not is_error and tool_timeline:
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": tool_timeline}],
+            }
+        )
 
     # Stats context (only on success with token counts)
     if not is_error and (input_tokens or output_tokens):
@@ -234,6 +253,7 @@ class ProgressReporter:
         output_tokens: int = 0,
         is_error: bool = False,
         error_message: str = "",
+        tool_timeline: str = "",
     ) -> None:
         """Send final response and stop background updates."""
         # Stop loop first so it does not race against our final update
@@ -251,6 +271,7 @@ class ProgressReporter:
             output_tokens=output_tokens,
             is_error=is_error,
             error_message=error_message,
+            tool_timeline=tool_timeline,
         )
 
         # Build a short fallback text for notification previews

@@ -325,6 +325,82 @@ class TestBuildCompletionBlocksMultiSection:
 
 
 # ---------------------------------------------------------------------------
+# build_completion_blocks — tool_timeline parameter
+# ---------------------------------------------------------------------------
+
+
+class TestBuildCompletionBlocksToolTimeline:
+    """Tests for tool_timeline parameter in build_completion_blocks."""
+
+    def _import(self):
+        from opentree.runner.progress import build_completion_blocks
+        return build_completion_blocks
+
+    def test_timeline_appears_as_context_block(self):
+        """tool_timeline adds a context block with the timeline text."""
+        build_completion_blocks = self._import()
+        timeline = "Tool timeline:\n  Bash (2.5s)\n  Read (1.0s)"
+        blocks = build_completion_blocks(
+            "Response text", elapsed=5.0, tool_timeline=timeline,
+        )
+        context_blocks = [b for b in blocks if b["type"] == "context"]
+        assert len(context_blocks) == 1
+        assert "Bash" in context_blocks[0]["elements"][0]["text"]
+
+    def test_timeline_not_shown_on_error(self):
+        """tool_timeline is suppressed when is_error is True."""
+        build_completion_blocks = self._import()
+        timeline = "Tool timeline:\n  Bash (2.5s)"
+        blocks = build_completion_blocks(
+            "", elapsed=5.0,
+            is_error=True, error_message="fail",
+            tool_timeline=timeline,
+        )
+        context_blocks = [b for b in blocks if b["type"] == "context"]
+        # Error blocks do not get timeline or stats context
+        assert len(context_blocks) == 0
+
+    def test_empty_timeline_no_extra_block(self):
+        """Empty tool_timeline does not add a context block."""
+        build_completion_blocks = self._import()
+        blocks = build_completion_blocks(
+            "Response", elapsed=3.0, tool_timeline="",
+        )
+        context_blocks = [b for b in blocks if b["type"] == "context"]
+        assert len(context_blocks) == 0
+
+    def test_timeline_before_stats_context(self):
+        """Timeline context appears before stats context when both present."""
+        build_completion_blocks = self._import()
+        timeline = "Tool timeline:\n  Bash (1.0s)"
+        blocks = build_completion_blocks(
+            "ok", elapsed=5.0,
+            input_tokens=100, output_tokens=50,
+            tool_timeline=timeline,
+        )
+        context_blocks = [b for b in blocks if b["type"] == "context"]
+        assert len(context_blocks) == 2
+        # First context = timeline, second context = stats
+        assert "Bash" in context_blocks[0]["elements"][0]["text"]
+        assert "100" in context_blocks[1]["elements"][0]["text"]
+
+    def test_timeline_with_long_response(self):
+        """Timeline works correctly with multi-section long responses."""
+        build_completion_blocks = self._import()
+        timeline = "Tool timeline:\n  Write (0.5s)"
+        text = "H" * 5000
+        blocks = build_completion_blocks(
+            text, elapsed=2.0,
+            input_tokens=10, output_tokens=5,
+            tool_timeline=timeline,
+        )
+        section_blocks = [b for b in blocks if b["type"] == "section"]
+        context_blocks = [b for b in blocks if b["type"] == "context"]
+        assert len(section_blocks) == 2  # 5000 chars -> 2 sections
+        assert len(context_blocks) == 2  # timeline + stats
+
+
+# ---------------------------------------------------------------------------
 # ProgressReporter
 # ---------------------------------------------------------------------------
 
@@ -501,6 +577,31 @@ class TestProgressReporterComplete:
             _, kwargs = call_kwargs
             assert "blocks" in kwargs
             assert isinstance(kwargs["blocks"], list)
+        finally:
+            reporter.stop()
+
+    def test_reporter_complete_with_tool_timeline(self):
+        """complete() with tool_timeline includes timeline in blocks."""
+        from opentree.runner.progress import ProgressReporter
+
+        slack = _make_slack_mock()
+        reporter = ProgressReporter(slack, "C001", "1234.5678", interval=60.0)
+
+        try:
+            reporter.start()
+            reporter.complete(
+                "Answer", elapsed=5.0,
+                input_tokens=100, output_tokens=50,
+                tool_timeline="Tool timeline:\n  Bash (2.0s)",
+            )
+            call_kwargs = slack.update_message.call_args
+            _, kwargs = call_kwargs
+            blocks = kwargs["blocks"]
+            context_blocks = [b for b in blocks if b["type"] == "context"]
+            # Should have 2 context blocks: timeline + stats
+            assert len(context_blocks) == 2
+            timeline_text = context_blocks[0]["elements"][0]["text"]
+            assert "Bash" in timeline_text
         finally:
             reporter.stop()
 
