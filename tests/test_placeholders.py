@@ -250,3 +250,110 @@ class TestEmptyContent:
         assert engine.resolve_content("") == ""
         assert engine.has_placeholders("") is False
         assert engine.scan_unresolved("") == ()
+
+
+# ===========================================================================
+# Issue 3: User config containing {{ must not break PlaceholderEngine
+# ===========================================================================
+
+
+class TestUnknownDoubleBraceLeftIntact:
+    """Unknown {{...}} patterns must pass through unchanged."""
+
+    def test_unknown_placeholder_left_as_is(self) -> None:
+        engine = PlaceholderEngine(_make_config())
+        content = "value = {{some_template_var}}"
+        result = engine.resolve_content(content)
+        assert result == "value = {{some_template_var}}"
+
+    def test_known_resolved_unknown_left(self) -> None:
+        engine = PlaceholderEngine(_make_config(bot_name="DOGI"))
+        content = "Bot: {{bot_name}}, Template: {{unknown_var}}"
+        result = engine.resolve_content(content)
+        assert result == "Bot: DOGI, Template: {{unknown_var}}"
+
+    def test_code_snippet_with_double_braces(self) -> None:
+        """A config value like a Jinja template must not be mangled."""
+        engine = PlaceholderEngine(_make_config())
+        content = "{% for item in list %}{{item.name}}{% endfor %}"
+        result = engine.resolve_content(content)
+        assert result == "{% for item in list %}{{item.name}}{% endfor %}"
+
+    def test_nested_braces_left_intact(self) -> None:
+        engine = PlaceholderEngine(_make_config())
+        content = "{{{not_a_placeholder}}}"
+        result = engine.resolve_content(content)
+        assert result == "{{{not_a_placeholder}}}"
+
+    def test_empty_double_braces(self) -> None:
+        engine = PlaceholderEngine(_make_config())
+        content = "empty: {{}}"
+        result = engine.resolve_content(content)
+        assert result == "empty: {{}}"
+
+    def test_resolve_file_leaves_unknown_placeholders(self, tmp_path: Path) -> None:
+        source = tmp_path / "template.md"
+        source.write_text(
+            "Bot: {{bot_name}}, Custom: {{my_custom}}",
+            encoding="utf-8",
+        )
+        target = tmp_path / "out" / "resolved.md"
+
+        engine = PlaceholderEngine(_make_config(bot_name="DOGI"))
+        result = engine.resolve_file(source, target)
+
+        assert target.exists()
+        assert target.read_text(encoding="utf-8") == "Bot: DOGI, Custom: {{my_custom}}"
+        assert result.had_placeholders is True
+
+    def test_scan_unresolved_ignores_non_identifier_braces(self) -> None:
+        """scan_unresolved only flags {{lowercase_underscore}} patterns."""
+        engine = PlaceholderEngine(_make_config())
+        content = "{{item.name}} and {{UPPER}} and {{unknown_field}}"
+        result = engine.scan_unresolved(content)
+        # Only {{unknown_field}} matches [a-z_]+ pattern
+        assert "{{unknown_field}}" in result
+        assert "{{item.name}}" not in result
+        assert "{{UPPER}}" not in result
+
+    def test_has_placeholders_false_for_unknown_only(self) -> None:
+        """has_placeholders returns False when only unknown patterns exist."""
+        engine = PlaceholderEngine(_make_config())
+        assert engine.has_placeholders("{{unknown_thing}}") is False
+
+    def test_multiple_unknown_all_preserved(self) -> None:
+        engine = PlaceholderEngine(_make_config())
+        content = "{{foo}} and {{bar}} and {{baz}}"
+        result = engine.resolve_content(content)
+        assert result == "{{foo}} and {{bar}} and {{baz}}"
+
+    def test_resolved_value_containing_placeholder_syntax_not_double_replaced(
+        self,
+    ) -> None:
+        """If a config value contains {{...}} syntax, it must NOT be resolved
+        again in a second pass (no double-replacement vulnerability).
+
+        The str.replace loop iterates dict keys in insertion order; if
+        ``admin_description`` is resolved first and its value contains
+        ``{{bot_name}}``, the subsequent ``bot_name`` replacement must NOT
+        expand it.  This test patches _replacements to control ordering.
+        """
+        engine = PlaceholderEngine(
+            _make_config(
+                bot_name="DOGI",
+                admin_description="Use {{bot_name}} in templates",
+            )
+        )
+        # Force admin_description to be resolved BEFORE bot_name by
+        # rebuilding the dict with admin_description first.
+        reordered = {}
+        reordered["{{admin_description}}"] = engine._replacements["{{admin_description}}"]
+        for k, v in engine._replacements.items():
+            if k != "{{admin_description}}":
+                reordered[k] = v
+        engine._replacements = reordered
+
+        content = "Desc: {{admin_description}}"
+        result = engine.resolve_content(content)
+        # Must NOT produce "Desc: Use DOGI in templates" (double-replacement).
+        assert result == "Desc: Use {{bot_name}} in templates"

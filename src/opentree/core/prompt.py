@@ -34,6 +34,44 @@ _hook_lock = threading.Lock()
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
+# ------------------------------------------------------------------ #
+# Hook cache (P2 perf fix: exec_module once, reuse on every request)
+# ------------------------------------------------------------------ #
+
+
+class PromptHookCache:
+    """Cache for prompt_hook callables loaded from module hook files.
+
+    Without caching, ``collect_module_prompts`` calls ``exec_module`` on
+    every request, re-parsing each hook script and creating fresh module
+    objects that accumulate in memory.  ``PromptHookCache`` loads each
+    hook exactly once and returns the cached callable on subsequent calls.
+
+    Thread safety is provided by a dedicated lock; concurrent callers
+    block briefly during the first load but afterwards read from the
+    dict without contention.
+    """
+
+    def __init__(self) -> None:
+        self._hooks: dict[str, Any] = {}  # module_name -> callable
+        self._lock = threading.Lock()
+
+    def get(self, name: str) -> Any | None:
+        """Return cached hook callable, or ``None`` if not cached."""
+        return self._hooks.get(name)
+
+    def put(self, name: str, hook_fn: Any) -> None:
+        """Store a hook callable."""
+        with self._lock:
+            self._hooks[name] = hook_fn
+
+    def __contains__(self, name: str) -> bool:
+        return name in self._hooks
+
+    def __len__(self) -> int:
+        return len(self._hooks)
+
+
 def _is_safe_name(name: str) -> bool:
     """Return True iff *name* is a safe module-directory component.
 
@@ -161,6 +199,8 @@ def collect_module_prompts(
     opentree_home: Path,
     registry: RegistryData,
     context: PromptContext,
+    *,
+    hook_cache: PromptHookCache | None = None,
 ) -> list[str]:
     """Load and execute ``prompt_hook`` from each registered module.
 
@@ -171,6 +211,14 @@ def collect_module_prompts(
     Errors in individual hooks are caught and reported as comment lines
     rather than propagated, so one broken module cannot break the entire
     prompt.
+
+    Parameters
+    ----------
+    hook_cache:
+        Optional :class:`PromptHookCache`.  When provided, hook callables
+        are loaded once via ``exec_module`` and then reused on every
+        subsequent call — eliminating per-request re-parsing and the
+        module-object accumulation that caused a memory leak.
 
     Thread safety
     -------------
@@ -197,6 +245,18 @@ def collect_module_prompts(
     thread_id = threading.get_ident()
 
     for name, _entry in registry.modules:
+        # --- Cache hit: skip all validation & loading -----------------------
+        if hook_cache is not None:
+            cached_fn = hook_cache.get(name)
+            if cached_fn is not None:
+                try:
+                    lines = cached_fn(context_dict)
+                    if isinstance(lines, list):
+                        results.extend(lines)
+                except Exception as exc:
+                    results.append(f"# [{name}] prompt_hook error: {exc}")
+                continue
+
         # --- Security: validate module name ---------------------------------
         if not _is_safe_name(name):
             continue
@@ -253,6 +313,9 @@ def collect_module_prompts(
                 lines = hook_fn(context_dict)
                 if isinstance(lines, list):
                     results.extend(lines)
+                # Cache the callable for future calls
+                if hook_cache is not None:
+                    hook_cache.put(name, hook_fn)
         except Exception as exc:
             results.append(f"# [{name}] prompt_hook error: {exc}")
         finally:

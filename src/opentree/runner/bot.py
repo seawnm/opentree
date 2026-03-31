@@ -11,6 +11,7 @@ from typing import Optional
 
 from opentree.runner.config import load_runner_config
 from opentree.runner.dispatcher import Dispatcher
+from opentree.runner.health import check_disk_usage
 from opentree.runner.logging_config import setup_logging
 from opentree.runner.receiver import Receiver
 from opentree.runner.slack_api import SlackAPI
@@ -55,12 +56,17 @@ class Bot:
     4. Cleanup (heartbeat remove)
     """
 
+    # Interval (seconds) between periodic disk health checks.
+    _HEALTH_CHECK_INTERVAL: int = 3600  # 1 hour
+
     def __init__(self, opentree_home: Path) -> None:
         self._home = opentree_home
         self._shutdown_event = threading.Event()
         self._start_time: float = 0.0
         self._heartbeat_path: Optional[Path] = None
         self._exit_code: int = 0
+        self._health_timer: Optional[threading.Timer] = None
+        self._last_health: Optional[dict] = None
 
         # Components (initialized in start())
         self._slack_api: Optional[SlackAPI] = None
@@ -128,6 +134,10 @@ class Bot:
         )
 
         self._start_time = time.time()
+
+        # Run initial health check and schedule periodic checks
+        self._run_health_check()
+
         logger.info(
             "OpenTree bot starting — home=%s, bot_user_id=%s",
             self._home,
@@ -223,6 +233,44 @@ class Bot:
             self._receiver.stop()
 
     # ------------------------------------------------------------------
+    # Private: health monitoring
+    # ------------------------------------------------------------------
+
+    def _schedule_health_check(self) -> None:
+        """Schedule the next periodic health check (daemon timer)."""
+        if self._shutdown_event.is_set():
+            return
+        self._health_timer = threading.Timer(
+            self._HEALTH_CHECK_INTERVAL,
+            self._run_health_check,
+        )
+        self._health_timer.daemon = True
+        self._health_timer.start()
+
+    def _run_health_check(self) -> None:
+        """Execute a health check and log a warning if disk is low."""
+        data_dir = self._home / "data"
+        try:
+            result = check_disk_usage(data_dir)
+            self._last_health = result
+            if result["warning"]:
+                logger.warning(
+                    "Low disk space: %d MB free (data_dir: %d MB)",
+                    result["free_mb"],
+                    result["data_dir_mb"],
+                )
+            else:
+                logger.debug(
+                    "Health check OK: %d MB free (data_dir: %d MB)",
+                    result["free_mb"],
+                    result["data_dir_mb"],
+                )
+        except OSError as exc:
+            logger.warning("Health check failed: %s", exc)
+        finally:
+            self._schedule_health_check()
+
+    # ------------------------------------------------------------------
     # Private: shutdown
     # ------------------------------------------------------------------
 
@@ -234,6 +282,10 @@ class Bot:
         3. Log shutdown
         """
         logger.info("Initiating graceful shutdown...")
+
+        # Cancel health check timer
+        if self._health_timer is not None:
+            self._health_timer.cancel()
 
         # Drain tasks if dispatcher is available
         if self._dispatcher is not None:
@@ -276,6 +328,11 @@ class Bot:
         if self._start_time == 0.0:
             return 0.0
         return time.time() - self._start_time
+
+    @property
+    def health_status(self) -> Optional[dict]:
+        """Most recent health check result, or ``None`` if not yet run."""
+        return self._last_health
 
     @property
     def is_running(self) -> bool:

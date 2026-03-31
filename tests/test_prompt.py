@@ -14,6 +14,7 @@ import pytest
 from opentree.core.config import UserConfig
 from opentree.core.prompt import (
     PromptContext,
+    PromptHookCache,
     assemble_system_prompt,
     build_config_block,
     build_date_block,
@@ -337,3 +338,131 @@ class TestAssembleSystemPrompt:
         assert "OPENTREE_HOME" in result
         assert "Asia/Taipei" in result
         assert result.endswith("\n")
+
+
+# ------------------------------------------------------------------ #
+# PromptHookCache tests
+# ------------------------------------------------------------------ #
+
+
+class TestPromptHookCache:
+    """Tests for cached hook loading (P2 perf fix: exec_module once)."""
+
+    def test_hooks_loaded_once_on_first_call(self, tmp_path: Path) -> None:
+        """exec_module should be called exactly once per hook, not on every request."""
+        hook_code = (
+            "call_count = 0\n"
+            "def prompt_hook(context):\n"
+            "    global call_count\n"
+            "    call_count += 1\n"
+            "    return [f'count={call_count}']\n"
+        )
+        _write_module_with_hook(tmp_path, "counter", hook_code)
+        registry = _make_registry("counter")
+
+        cache = PromptHookCache()
+        ctx = PromptContext(user_name="alice")
+
+        # First call — loads the hook (exec_module runs once)
+        lines1 = collect_module_prompts(tmp_path, registry, ctx, hook_cache=cache)
+        assert lines1 == ["count=1"]
+
+        # Second call — reuses cached callable, same module object
+        lines2 = collect_module_prompts(tmp_path, registry, ctx, hook_cache=cache)
+        # call_count increments because same function object is reused
+        assert lines2 == ["count=2"]
+
+    def test_cached_hooks_reused_on_subsequent_calls(self, tmp_path: Path) -> None:
+        """The cached callable must be the exact same object across calls."""
+        hook_code = (
+            "def prompt_hook(context):\n"
+            "    return ['cached']\n"
+        )
+        _write_module_with_hook(tmp_path, "stable", hook_code)
+        registry = _make_registry("stable")
+
+        cache = PromptHookCache()
+        ctx = PromptContext()
+
+        # Load hooks
+        collect_module_prompts(tmp_path, registry, ctx, hook_cache=cache)
+
+        # The cache should contain one entry
+        assert len(cache) == 1
+
+        # Grab the cached callable
+        cached_fn = cache.get("stable")
+        assert cached_fn is not None
+
+        # Call again
+        collect_module_prompts(tmp_path, registry, ctx, hook_cache=cache)
+
+        # Same function object (not re-imported)
+        assert cache.get("stable") is cached_fn
+
+    def test_cache_not_populated_for_hookless_modules(self, tmp_path: Path) -> None:
+        """Modules without prompt_hook should not appear in cache."""
+        mod_dir = tmp_path / "modules" / "plain"
+        mod_dir.mkdir(parents=True)
+        manifest = {"name": "plain", "version": "1.0.0"}
+        (mod_dir / "opentree.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+        registry = _make_registry("plain")
+
+        cache = PromptHookCache()
+        ctx = PromptContext()
+        collect_module_prompts(tmp_path, registry, ctx, hook_cache=cache)
+
+        assert len(cache) == 0
+
+    def test_no_exec_module_on_second_call(self, tmp_path: Path) -> None:
+        """Verify exec_module is NOT called on the second invocation."""
+        hook_code = (
+            "def prompt_hook(context):\n"
+            "    return ['ok']\n"
+        )
+        _write_module_with_hook(tmp_path, "traced", hook_code)
+        registry = _make_registry("traced")
+
+        cache = PromptHookCache()
+        ctx = PromptContext()
+
+        # First call populates cache
+        collect_module_prompts(tmp_path, registry, ctx, hook_cache=cache)
+
+        # Patch exec_module to detect if it would be called again
+        with patch("opentree.core.prompt.importlib.util") as mock_util:
+            lines = collect_module_prompts(tmp_path, registry, ctx, hook_cache=cache)
+            # exec_module should NOT have been called — hook is cached
+            mock_util.spec_from_file_location.assert_not_called()
+
+        assert lines == ["ok"]
+
+    def test_backward_compatible_without_cache(self, tmp_path: Path) -> None:
+        """collect_module_prompts without hook_cache should still work (no caching)."""
+        hook_code = (
+            "def prompt_hook(context):\n"
+            "    return ['compat']\n"
+        )
+        _write_module_with_hook(tmp_path, "legacy", hook_code)
+        registry = _make_registry("legacy")
+        ctx = PromptContext()
+
+        # Call without hook_cache — original behaviour
+        lines = collect_module_prompts(tmp_path, registry, ctx)
+        assert lines == ["compat"]
+
+    def test_error_hook_not_cached(self, tmp_path: Path) -> None:
+        """A hook that fails to load should not be cached."""
+        hook_code = "raise SyntaxError('bad hook')\n"
+        _write_module_with_hook(tmp_path, "bad", hook_code)
+        registry = _make_registry("bad")
+
+        cache = PromptHookCache()
+        ctx = PromptContext()
+
+        lines = collect_module_prompts(tmp_path, registry, ctx, hook_cache=cache)
+        assert any("error" in l.lower() for l in lines)
+        # Should NOT cache the broken hook
+        assert cache.get("bad") is None

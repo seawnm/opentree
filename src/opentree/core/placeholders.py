@@ -10,8 +10,9 @@ Design:
       validate before linking.
     - Resolution produces a *copy* (``resolved_copy``) rather than a symlink
       so that the target contains concrete values.
-    - Uses ``str.replace()`` (not ``re.sub``) to avoid backslash
-      interpretation issues with Windows paths.
+    - Uses a single-pass regex (``re.sub``) to resolve only *known*
+      placeholders in one sweep, preventing double-replacement when
+      a resolved value itself contains ``{{...}}`` syntax.
 """
 
 from __future__ import annotations
@@ -63,14 +64,21 @@ class PlaceholderEngine:
         return dict(self._replacements)
 
     def resolve_content(self, content: str) -> str:
-        """Replace all known ``{{key}}`` tokens in *content*.
+        """Replace only known ``{{key}}`` tokens in *content*.
 
-        Uses ``str.replace()`` to avoid backslash interpretation issues
-        with Windows paths.
+        Uses a single-pass regex replacement so that resolved values
+        containing ``{{...}}`` syntax are never subject to further
+        expansion (no double-replacement risk).  Unknown ``{{key}}``
+        tokens are left as-is.
         """
-        for placeholder, value in self._replacements.items():
-            content = content.replace(placeholder, value)
-        return content
+
+        def _replace_match(match: re.Match[str]) -> str:
+            token = match.group(0)  # e.g. "{{bot_name}}"
+            if token in self._replacements:
+                return self._replacements[token]
+            return token  # leave unknown tokens untouched
+
+        return re.sub(r"\{\{[^}]*\}\}", _replace_match, content)
 
     def resolve_file(self, source: Path, target: Path) -> ResolveResult:
         """Read *source*, resolve placeholders, write result to *target*.

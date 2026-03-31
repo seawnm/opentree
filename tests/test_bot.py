@@ -584,3 +584,66 @@ class TestCliIntegration:
                 bot_module.Bot = original_bot_cls
 
         mock_bot_cls.assert_not_called()
+
+
+# ===========================================================================
+# Health check integration tests
+# ===========================================================================
+
+
+class TestHealthCheck:
+    """Tests for disk health monitoring integration in Bot."""
+
+    def test_health_status_none_before_start(self, tmp_path):
+        """health_status is None before start() is called."""
+        home = _make_home(tmp_path)
+        bot = Bot(home)
+        assert bot.health_status is None
+
+    def test_health_check_runs_on_start(self, tmp_path):
+        """start() runs an initial health check, populating health_status."""
+        home = _make_home(tmp_path)
+        # Create data dir so health check has something to inspect
+        (home / "data").mkdir(parents=True, exist_ok=True)
+        bot = Bot(home)
+
+        mock_slack_api_instance = MagicMock()
+        mock_slack_api_instance.auth_test.return_value = {"user_id": "UBOT1"}
+        mock_slack_api_instance.bot_user_id = "UBOT1"
+
+        mock_dispatcher_instance = MagicMock()
+        mock_dispatcher_instance.task_queue = MagicMock()
+        mock_dispatcher_instance.task_queue.wait_for_drain = MagicMock(return_value=True)
+        mock_dispatcher_instance.exit_code = 0
+
+        mock_receiver_instance = MagicMock()
+
+        with (
+            patch("opentree.runner.bot.SlackAPI", return_value=mock_slack_api_instance),
+            patch("opentree.runner.bot.Dispatcher", return_value=mock_dispatcher_instance),
+            patch("opentree.runner.bot.Receiver", return_value=mock_receiver_instance),
+        ):
+            bot.start()
+
+        # After start(), health_status should be populated
+        assert bot.health_status is not None
+        assert "free_mb" in bot.health_status
+        assert "warning" in bot.health_status
+
+    def test_shutdown_cancels_health_timer(self, tmp_path):
+        """_shutdown cancels the pending health timer."""
+        home = _make_home(tmp_path)
+        bot = Bot(home)
+
+        mock_timer = MagicMock()
+        bot._health_timer = mock_timer
+
+        mock_dispatcher = MagicMock()
+        mock_task_queue = MagicMock()
+        mock_task_queue.wait_for_drain.return_value = True
+        mock_dispatcher.task_queue = mock_task_queue
+        bot._dispatcher = mock_dispatcher
+
+        bot._shutdown()
+
+        mock_timer.cancel.assert_called_once()
