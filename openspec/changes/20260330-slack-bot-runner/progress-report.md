@@ -172,7 +172,87 @@ run.sh 功能：自動重啟、watchdog（heartbeat 超時 120s）、crash loop 
 
 ---
 
-## 五、E2E 實機測試
+## 五、E2E 驗證階段（2026-03-31）
+
+### 概述
+
+在 Phase 1-3 合規性修復和 E2E 實測修復之後，進行完整的 E2E 驗證。透過 DOGI 在 Slack 中向 Bot_Walter 發送指令，驗證端到端流程。
+
+### Batch 1：4 bugs 修復（commit `82eec96`）
+
+首輪 E2E 測試發現 4 個問題並修復：
+
+| Bug | 嚴重度 | 問題 | 修復方式 |
+|-----|--------|------|----------|
+| SlackAPI `_extract_data` | CRITICAL | `getattr` pattern 對 `SlackResponse` 無效 | `_extract_data()` helper，直接存取 `.data` dict |
+| Bot-to-bot mention drop | CRITICAL | `bot_id` filter 丟棄所有 bot 訊息 | 允許帶有明確 @mention 的 bot 訊息 |
+| Shutdown no auth | HIGH | 任何人都能 shutdown | `admin_users` config + auth check |
+| Heartbeat before filters | MEDIUM | 只在 dispatch 寫 heartbeat | 移到 receiver filter 前 |
+
+Status E2E 結果：**PASS**（回覆正確），但發現 dedup 問題——同一指令收到 2 則回覆。
+
+### Batch 2：Dedup 修復（commits `54db6cc`, `72ecc6c`）
+
+Dedup 問題根因：`slack_bolt` 對同一條 @mention 訊息同時觸發 `message` 和 `app_mention` 兩個 handler，在不同 thread 中並行處理，導致重複回覆。WSL2 跨檔案系統的 stale `.pyc` bytecache 加劇了問題。
+
+**修復方案**：
+1. **Single handler 架構**：移除 `app_mention` handler，只保留 `message` handler（commit `72ecc6c`）
+2. **Layer 2 dedup**：`Dispatcher` 新增 `_dispatched_ts` set（with thread lock），攔截殘餘重複（commit `72ecc6c`）
+3. **移除冗餘 heartbeat**：dispatcher 中的 heartbeat write 已由 receiver 涵蓋（commit `54db6cc`）
+
+修復後全部測試通過：
+
+| Test | 結果 |
+|------|------|
+| status command | PASS（單一回覆） |
+| help command | PASS（單一回覆） |
+| Claude reply | PASS（單一 Claude 回覆） |
+| thread resume | PASS（session 保持） |
+| dedup verification | PASS（無重複） |
+
+### Code Review（Phase 4）
+
+E2E 修復後進行 code review，發現並修復：
+
+| 嚴重度 | 問題 | 修復 |
+|--------|------|------|
+| CRITICAL | status/help 標為 "admin" 但無 auth | 重新命名為 `_BOT_COMMANDS`，只有 shutdown 需 auth |
+| HIGH | `dict()` fallback in `_extract_data` 遮蔽錯誤 | 移除，回傳 empty dict 僅用於 missing key |
+| HIGH | Empty `admin_users` = 無人可 shutdown | 文件說明 + startup warning + validation |
+| MEDIUM | Double heartbeat write | 移除 dispatcher 冗餘呼叫 |
+| MEDIUM | admin_users 無 input validation | 新增 string/non-empty check |
+
+完整 review log：`openspec/changes/20260331-e2e-verification/review-log.md`
+
+### Agent 交互
+
+E2E 驗證階段共約 8 次 agent 調用：
+
+| Agent | 用途 |
+|-------|------|
+| explore | 分析現有程式碼結構 |
+| flow-simulator | 31 場景模擬（21 pass / 10 fail） |
+| tdd | 新增 29 個測試 |
+| code-reviewer | E2E 修復後 review |
+| sync (rsync) | 部署到測試環境 |
+
+### 測試統計
+
+- **總測試數**：824（+29 新增，原 795）
+- **整體覆蓋率**：93%
+- **新增測試**：E2E fixtures、dedup 測試、admin_users validation 測試
+
+### Commits
+
+| Hash | Message |
+|------|---------|
+| `82eec96` | fix: E2E 驗證 — SlackAPI parsing + bot-to-bot mention + shutdown auth + heartbeat |
+| `54db6cc` | fix: 移除 dispatcher 冗餘 heartbeat write |
+| `72ecc6c` | fix: cross-handler dedup — single handler + Layer 2 dispatcher dedup |
+
+---
+
+## 六、E2E 實機測試（早期）
 
 ### 環境準備
 
@@ -204,7 +284,7 @@ Claude CLI 實際上不支援以下參數：
 
 ---
 
-## 六、測試覆蓋率
+## 七、測試覆蓋率
 
 ### 總覽
 
@@ -250,7 +330,7 @@ Claude CLI 實際上不支援以下參數：
 
 ---
 
-## 七、Agent 交互與決策歷程
+## 八、Agent 交互與決策歷程
 
 ### 使用的 Agent 類型統計
 
@@ -286,7 +366,7 @@ Claude CLI 實際上不支援以下參數：
 
 ---
 
-## 八、Commit 歷史
+## 九、Commit 歷史
 
 | Hash | Message | 變更規模 |
 |------|---------|---------|
@@ -306,12 +386,15 @@ Claude CLI 實際上不支援以下參數：
 | `2f22906` | **feat: Phase 3 運維 — 日誌系統 + run.sh wrapper + init 整合** | 5 files, +684/-1 |
 | `7e4bd65` | **fix: Phase 2+3 合規性補齊 — simulation + review 發現的 HIGH issues 修復** | 18 files, +2,815/-32 |
 | `75915ce` | **fix: E2E 實測修復 — SlackResponse 轉換 + Claude CLI 參數** | 3 files, +34/-28 |
+| `82eec96` | **fix: E2E 驗證 — SlackAPI parsing + bot-to-bot mention + shutdown auth + heartbeat** | — |
+| `54db6cc` | **fix: 移除 dispatcher 冗餘 heartbeat write** | — |
+| `72ecc6c` | **fix: cross-handler dedup — single handler + Layer 2 dispatcher dedup** | — |
 
-> **Bot Runner 相關**（`460849d` ~ `75915ce`）：6 commits, ~15,105 行變更
+> **Bot Runner 相關**（`460849d` ~ `72ecc6c`）：9 commits
 
 ---
 
-## 九、OpenSpec 文件清單
+## 十、OpenSpec 文件清單
 
 ### 20260329-initial-architecture/（初始架構）
 
@@ -381,6 +464,14 @@ Claude CLI 實際上不支援以下參數：
 | `review-log.md` | Phase 3 code review（4 HIGH + 5 MEDIUM + 4 LOW，含 run.sh showstopper） |
 | `web-research-watchdog.md` | Bash 程序監督和 watchdog 模式調研（838 行） |
 
+### 20260331-e2e-verification/（E2E 驗證）
+
+| 文件 | 內容摘要 |
+|------|---------|
+| `simulation-report.md` | 31 場景模擬報告（21 pass / 10 fail，10 issues all fixed） |
+| `review-log.md` | Phase 4 code review（1 CRITICAL + 2 HIGH + 2 MEDIUM + 3 LOW） |
+| `test-plan.md` | E2E 測試計畫 |
+
 ---
 
 ## 附錄：完整 OpenSpec 檔案路徑
@@ -418,4 +509,7 @@ openspec/changes/20260330-slack-bot-runner/research.md
 openspec/changes/20260330-slack-bot-runner/review-log.md
 openspec/changes/20260330-slack-bot-runner/session-handoff-plan.md
 openspec/changes/20260330-slack-bot-runner/simulation-report.md
+openspec/changes/20260331-e2e-verification/simulation-report.md
+openspec/changes/20260331-e2e-verification/review-log.md
+openspec/changes/20260331-e2e-verification/test-plan.md
 ```

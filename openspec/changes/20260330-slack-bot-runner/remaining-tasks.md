@@ -47,23 +47,28 @@
   - [ ] settings.json 在指定 config dir 中是否被正確讀取
 
 ### E2E 測試剩餘項目
-- **狀態**：進行中（commit 82eec96 修復 3 CRITICAL + E2E 基礎設施）
+- **狀態**：大部分完成（commits 82eec96, 54db6cc, 72ecc6c）
 - 已修復：
-  - [x] SlackAPI response parsing（_extract_data helper）
-  - [x] Bot-to-bot @mention（receiver.py 允許其他 bot 的明確 @mention）
-  - [x] Shutdown 權限檢查（admin_users 設定）
-  - [x] Heartbeat 在所有事件寫入
+  - [x] SlackAPI response parsing（`_extract_data` helper）— commit `82eec96`
+  - [x] Bot-to-bot @mention（receiver.py 允許其他 bot 的明確 @mention）— commit `82eec96`
+  - [x] Shutdown 權限檢查（`admin_users` 設定 + auth check）— commit `82eec96`
+  - [x] Heartbeat 在所有事件寫入（before filters）— commit `82eec96`
+  - [x] Double heartbeat write（移除 dispatcher 冗餘寫入）— commit `54db6cc`
+  - [x] Cross-handler dedup race（single handler + Layer 2 dispatcher dedup）— commit `72ecc6c`
 - 已通過：
-  - [x] Admin 指令測試 — status（DOGI → @Bot_Walter status → 回覆成功）
-- 已發現（待處理）：
-  - [ ] **Dedup 跨 handler**：message + app_mention 同一事件觸發兩次回覆（LOW）
+  - [x] Admin 指令測試 — status（單一回覆確認）
+  - [x] Admin 指令測試 — help（單一回覆確認）
+  - [x] Claude reply flow（@Bot_Walter 問候 → Claude 回覆）
+  - [x] Thread resume（同 thread 第二則訊息，session 保持）
+  - [x] Dedup 驗證（同一事件只觸發一次回覆）
 - 待測項目：
-  - [ ] Admin 指令測試 — help / shutdown
-  - [ ] DM 訊息測試
-  - [ ] 檔案上傳測試
-  - [ ] run.sh wrapper 測試
+  - [ ] Thread 多輪對話測試（longer conversation chains）
   - [ ] 並行請求測試
-  - [ ] Thread 多輪對話測試（含 Claude CLI 回覆）
+  - [ ] run.sh wrapper 測試
+  - [ ] 檔案上傳測試
+  - [x] ~~DM 訊息測試~~ — SKIPPED（DOGI 無法 relay DM 到 Bot_Walter）
+- 已知問題：
+  - **WSL2 bytecache**：rsync 部署後必須清理 `__pycache__`（跨檔案系統 timestamp 比較不可靠，stale .pyc 會導致行為不一致）
 
 ---
 
@@ -150,6 +155,6 @@
 ## 下一個 Session 的建議起始點
 
 1. **完成 CLAUDE_CONFIG_DIR 驗證**（5 分鐘手動執行 verify_config_dir.sh）
-2. **完成剩餘 E2E 測試**（admin 指令、DM、檔案、wrapper、並行）
+2. **完成剩餘 E2E 測試**（multi-turn context、concurrent requests、run.sh wrapper）
 3. **發布 v0.2.0**（更新版本號 + CHANGELOG 日期 + git tag）
 4. 若時間充裕，處理 P1 的 MEDIUM issues（優先：超長訊息截斷、`host` 指令 fallback）

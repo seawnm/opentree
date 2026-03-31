@@ -23,6 +23,9 @@
 - `opentree start --mode slack`: 新增 Slack bot daemon 模式
 - `opentree init`: 產生 `bin/run.sh`（placeholder 替換 + chmod +x）和 `config/.env.example`
 - `pyproject.toml`: 新增 `[slack]` optional dependency group（slack-bolt、slack-sdk）
+- E2E test infrastructure (`tests/e2e/`) with pytest fixtures for Slack integration
+- `admin_users` field in `RunnerConfig` for shutdown authorization
+- Layer 2 dedup in `Dispatcher` (`_dispatched_ts` set with thread lock)
 
 ### Changed
 - `core/prompt.py`: 修復 `collect_module_prompts` 的 sys.modules 並行競爭（thread-local key + lock）
@@ -30,6 +33,12 @@
 - `cli/init.py`: `start_command` 新增 `--mode` 參數（`interactive` | `slack`），加入模式驗證
 
 ### Fixed
+- `slack_api.py`: SlackAPI response parsing — replaced broken `getattr` pattern with `_extract_data()` helper
+- `receiver.py`: Bot-to-bot @mention — allow other bots' explicit @mentions through `_handle_message`
+- `dispatcher.py`: Cross-handler dedup race — single handler architecture + Layer 2 dispatcher dedup (`_dispatched_ts` set with thread lock)
+- `dispatcher.py`: Shutdown authorization — `admin_users` config with auth check in `_handle_admin_command`
+- `receiver.py`: Heartbeat on all events — write before filters to prevent watchdog false kills
+- `dispatcher.py`: Double heartbeat write — removed redundant `_write_heartbeat()` call
 - `run.sh`: `wait || true` 導致 crash detection 失效（exit code 永遠為 0）
 - `run.sh`: `$BOT_CMD` 未引號導致路徑含空格時崩潰（改用 bash array）
 - `run.sh`: `cleanup()` 無 timeout（bot 掛起時 wrapper 永遠阻塞，加入 40s timeout + SIGKILL）
@@ -43,6 +52,7 @@
 - Phase 1 核心循環：[openspec/changes/20260330-slack-bot-runner/](openspec/changes/20260330-slack-bot-runner/)
 - Phase 2 UX 強化：[openspec/changes/20260330-phase2-ux/](openspec/changes/20260330-phase2-ux/)
 - Phase 3 運維：[openspec/changes/20260330-phase3-ops/](openspec/changes/20260330-phase3-ops/)
+- E2E 驗證：[openspec/changes/20260331-e2e-verification/](openspec/changes/20260331-e2e-verification/)
 
 ## [0.1.0] - 2026-03-29
 
