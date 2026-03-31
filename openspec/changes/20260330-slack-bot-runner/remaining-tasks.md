@@ -1,6 +1,6 @@
 # OpenTree Bot Runner — 待辦事項與下一步
 
-> 更新日期：2026-03-31（v0.2.0 released）
+> 更新日期：2026-03-31（P2 Simulation fixes done, commit 6d0969c）
 > 來源 Thread：betaroom 1774800803.111649
 
 ## 已完成項目摘要
@@ -29,6 +29,12 @@
 - cleanup() timeout + SIGKILL、handler.close() 洩漏修復
 - bot.py: shutdown config 快取、reporter.start() fallback
 - file_handler: cleanup_temp 路徑一致性
+
+### P2 Simulation 修復（commit 6d0969c）
+- prompt_hook 每次 exec_module → PromptHookCache 啟動時快取（thread-safe）
+- PlaceholderEngine `{{` 誤替換 → re.sub single-pass regex（未知 pattern 保留原樣）
+- 無磁碟空間監控 → health.py + hourly check + WARNING threshold
+- exec_module 記憶體累積 → 由 PromptHookCache 解決（單次載入）
 
 ### E2E 實測修復（commit 75915ce）
 - SlackResponse 轉換 + Claude CLI 參數修正
@@ -142,7 +148,7 @@
 
 ## P2 — 中期
 
-### Phase 4 進階功能（來自 proposal.md 規劃）
+### Phase 4 進階功能（來自 proposal.md 規劃）— ⬆ NEXT UP
 - [ ] **Tool Tracker + Timeline**：追蹤 Claude 使用的工具，產生 timeline 回報
 - [ ] **Retry 機制**：overloaded_error / session_error 的自動重試邏輯
 - [ ] **Circuit Breaker**：連續失敗時暫停接收新任務，避免雪崩
@@ -152,14 +158,14 @@
 - [ ] 模組版本升級流程（比對 bundled vs installed 版本，選擇性升級）
 - 來源：handoff.md #3
 
-### Simulation Issues（MEDIUM — Phase 1）
+### Simulation Issues（MEDIUM — Phase 1）— ✅ 全部完成（commit `6d0969c`）
 
-| Issue | 問題 | 來源 |
-|-------|------|------|
-| #2 prompt_hook 每次 exec_module | 每個請求都 exec_module 載入 hook，應改為啟動時快取 | simulation-report (Phase 1) |
-| #6 user config 含 `{{` 破壞 PlaceholderEngine | 使用者設定值含 `{{` 時被誤判為 placeholder | simulation-report (Phase 1) |
-| #9 無磁碟空間監控 | 長時間運行下 log + session 檔案可能填滿磁碟 | simulation-report (Phase 1) |
-| #10 exec_module 物件記憶體累積 | hook 模組未被 GC 回收，記憶體緩慢增長 | simulation-report (Phase 1) |
+| Issue | 問題 | 修復方式 | 狀態 |
+|-------|------|----------|------|
+| #2 prompt_hook 每次 exec_module | 每個請求都 exec_module 載入 hook | PromptHookCache 啟動時快取 | ✅ 完成 |
+| #6 user config 含 `{{` 破壞 PlaceholderEngine | 使用者設定值含 `{{` 時被誤判 | re.sub single-pass regex | ✅ 完成 |
+| #9 無磁碟空間監控 | log + session 可能填滿磁碟 | health.py + hourly check + WARNING threshold | ✅ 完成 |
+| #10 exec_module 物件記憶體累積 | hook 模組未被 GC 回收 | 由 PromptHookCache 解決（單次載入） | ✅ 完成 |
 
 ### Code Review Issues（LOW）
 

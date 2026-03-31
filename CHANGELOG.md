@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Fixed
+- PlaceholderEngine: unknown `{{...}}` patterns preserved (single-pass regex, no double-replacement)
+- prompt_hook: cached at startup via `PromptHookCache` (no repeated exec_module)
+
+### Added
+- Disk space health monitoring (`health.py`) with hourly checks and WARNING threshold
+- `PromptHookCache` class for thread-safe hook callable caching
+
 ## [0.2.0] - 2026-03-31
 
 ### Added
