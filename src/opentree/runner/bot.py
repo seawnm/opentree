@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import signal
+import sys
 import threading
 import time
 from pathlib import Path
@@ -15,6 +16,25 @@ from opentree.runner.receiver import Receiver
 from opentree.runner.slack_api import SlackAPI
 
 logger = logging.getLogger(__name__)
+
+# Prefixes that indicate a .env.example placeholder value rather than a real token.
+_PLACEHOLDER_PREFIXES = (
+    "xoxb-your-",
+    "xapp-your-",
+    "your-",
+    "xoxb-xxx",
+    "xapp-xxx",
+)
+
+
+def _validate_not_placeholder(value: str, name: str) -> None:
+    """Raise RuntimeError if *value* looks like a .env.example placeholder."""
+    for prefix in _PLACEHOLDER_PREFIXES:
+        if value.startswith(prefix):
+            raise RuntimeError(
+                f"{name} appears to be a placeholder (starts with '{prefix}'). "
+                "Update your .env file."
+            )
 
 
 class Bot:
@@ -40,6 +60,7 @@ class Bot:
         self._shutdown_event = threading.Event()
         self._start_time: float = 0.0
         self._heartbeat_path: Optional[Path] = None
+        self._exit_code: int = 0
 
         # Components (initialized in start())
         self._slack_api: Optional[SlackAPI] = None
@@ -65,7 +86,12 @@ class Bot:
         8. On return/exception: _shutdown()
         """
         log_dir = self._home / "data" / "logs"
-        setup_logging(log_dir)
+        file_logging_active = setup_logging(log_dir)
+        if not file_logging_active:
+            logger.warning(
+                "File logging unavailable (log_dir: %s); running in console-only mode",
+                log_dir,
+            )
         logger.info("OpenTree Bot starting (home: %s)", self._home)
 
         bot_token, app_token = self._load_tokens()
@@ -113,7 +139,12 @@ class Bot:
             self._receiver.start()
         finally:
             # Step 8: graceful shutdown
+            # Propagate exit code from dispatcher (restart=1, shutdown=0)
+            if self._dispatcher is not None:
+                self._exit_code = self._dispatcher.exit_code
             self._shutdown()
+            if self._exit_code != 0:
+                sys.exit(self._exit_code)
 
     # ------------------------------------------------------------------
     # Private: token loading
@@ -163,6 +194,10 @@ class Bot:
             raise RuntimeError(
                 "SLACK_APP_TOKEN is missing from config/.env"
             )
+
+        # Reject .env.example placeholder values
+        _validate_not_placeholder(bot_token, "SLACK_BOT_TOKEN")
+        _validate_not_placeholder(app_token, "SLACK_APP_TOKEN")
 
         return bot_token, app_token
 
@@ -225,6 +260,15 @@ class Bot:
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
+
+    @property
+    def exit_code(self) -> int:
+        """The exit code to use when the bot process terminates.
+
+        0 = clean shutdown (wrapper will NOT restart).
+        Non-zero = crash/restart signal (wrapper WILL restart).
+        """
+        return self._exit_code
 
     @property
     def uptime_seconds(self) -> float:

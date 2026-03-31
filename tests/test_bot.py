@@ -119,6 +119,51 @@ class TestLoadTokens:
         assert bot_token == "xoxb-quoted"
         assert app_token == "xapp-single"
 
+    # --- Placeholder sentinel tests ---
+
+    def test_load_tokens_rejects_bot_token_placeholder_your(self, tmp_path):
+        """Placeholder 'xoxb-your-bot-token' must be rejected."""
+        home = _make_home(tmp_path, bot_token="xoxb-your-bot-token", app_token="xapp-real")
+        bot = Bot(home)
+        with pytest.raises(RuntimeError, match="placeholder"):
+            bot._load_tokens()
+
+    def test_load_tokens_rejects_app_token_placeholder_your(self, tmp_path):
+        """Placeholder 'xapp-your-app-token' must be rejected."""
+        home = _make_home(tmp_path, bot_token="xoxb-real", app_token="xapp-your-app-token")
+        bot = Bot(home)
+        with pytest.raises(RuntimeError, match="placeholder"):
+            bot._load_tokens()
+
+    def test_load_tokens_rejects_bot_token_placeholder_xxx(self, tmp_path):
+        """Placeholder 'xoxb-xxx...' must be rejected."""
+        home = _make_home(tmp_path, bot_token="xoxb-xxx-fake", app_token="xapp-real")
+        bot = Bot(home)
+        with pytest.raises(RuntimeError, match="placeholder"):
+            bot._load_tokens()
+
+    def test_load_tokens_rejects_app_token_placeholder_xxx(self, tmp_path):
+        """Placeholder 'xapp-xxx...' must be rejected."""
+        home = _make_home(tmp_path, bot_token="xoxb-real", app_token="xapp-xxx-fake")
+        bot = Bot(home)
+        with pytest.raises(RuntimeError, match="placeholder"):
+            bot._load_tokens()
+
+    def test_load_tokens_rejects_generic_your_prefix(self, tmp_path):
+        """Placeholder starting with 'your-' must be rejected."""
+        home = _make_home(tmp_path, bot_token="your-token-here", app_token="xapp-real")
+        bot = Bot(home)
+        with pytest.raises(RuntimeError, match="placeholder"):
+            bot._load_tokens()
+
+    def test_load_tokens_accepts_real_tokens(self, tmp_path):
+        """Real tokens (xoxb-1234..., xapp-5678...) must be accepted."""
+        home = _make_home(tmp_path, bot_token="xoxb-1234567890-abcdef", app_token="xapp-1-abc-def")
+        bot = Bot(home)
+        bot_token, app_token = bot._load_tokens()
+        assert bot_token == "xoxb-1234567890-abcdef"
+        assert app_token == "xapp-1-abc-def"
+
 
 # ===========================================================================
 # start() sequence tests
@@ -139,6 +184,7 @@ class TestStartSequence:
         mock_dispatcher_instance = MagicMock()
         mock_dispatcher_instance.task_queue = MagicMock()
         mock_dispatcher_instance.task_queue.wait_for_drain = MagicMock(return_value=True)
+        mock_dispatcher_instance.exit_code = 0
 
         mock_receiver_instance = MagicMock()
 
@@ -196,6 +242,7 @@ class TestStartSequence:
         mock_dispatcher_instance = MagicMock()
         mock_dispatcher_instance.task_queue = MagicMock()
         mock_dispatcher_instance.task_queue.wait_for_drain = MagicMock(return_value=True)
+        mock_dispatcher_instance.exit_code = 0
 
         mock_receiver_cls = MagicMock()
         mock_receiver_instance = MagicMock()
@@ -373,6 +420,66 @@ class TestProperties:
 # ===========================================================================
 # CLI integration tests
 # ===========================================================================
+
+class TestExitCode:
+    """Tests for the Bot exit code mechanism (restart vs shutdown)."""
+
+    def test_default_exit_code_is_zero(self, tmp_path):
+        """Bot's default exit code is 0 (clean exit)."""
+        home = _make_home(tmp_path)
+        bot = Bot(home)
+        assert bot.exit_code == 0
+
+    def test_exit_code_propagated_from_dispatcher(self, tmp_path):
+        """When dispatcher sets exit_code=1, Bot.start() exits with that code."""
+        home = _make_home(tmp_path)
+        bot = Bot(home)
+
+        mock_slack_api_instance = MagicMock()
+        mock_slack_api_instance.auth_test.return_value = {"user_id": "UBOT1"}
+        mock_slack_api_instance.bot_user_id = "UBOT1"
+
+        mock_dispatcher_instance = MagicMock()
+        mock_dispatcher_instance.task_queue = MagicMock()
+        mock_dispatcher_instance.task_queue.wait_for_drain = MagicMock(return_value=True)
+        mock_dispatcher_instance.exit_code = 1  # restart requested
+
+        mock_receiver_instance = MagicMock()
+
+        with (
+            patch("opentree.runner.bot.SlackAPI", return_value=mock_slack_api_instance),
+            patch("opentree.runner.bot.Dispatcher", return_value=mock_dispatcher_instance),
+            patch("opentree.runner.bot.Receiver", return_value=mock_receiver_instance),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            bot.start()
+
+        assert exc_info.value.code == 1
+
+    def test_clean_shutdown_exits_zero(self, tmp_path):
+        """Normal shutdown (exit_code=0) does not call sys.exit."""
+        home = _make_home(tmp_path)
+        bot = Bot(home)
+
+        mock_slack_api_instance = MagicMock()
+        mock_slack_api_instance.auth_test.return_value = {"user_id": "UBOT1"}
+        mock_slack_api_instance.bot_user_id = "UBOT1"
+
+        mock_dispatcher_instance = MagicMock()
+        mock_dispatcher_instance.task_queue = MagicMock()
+        mock_dispatcher_instance.task_queue.wait_for_drain = MagicMock(return_value=True)
+        mock_dispatcher_instance.exit_code = 0  # clean shutdown
+
+        mock_receiver_instance = MagicMock()
+
+        with (
+            patch("opentree.runner.bot.SlackAPI", return_value=mock_slack_api_instance),
+            patch("opentree.runner.bot.Dispatcher", return_value=mock_dispatcher_instance),
+            patch("opentree.runner.bot.Receiver", return_value=mock_receiver_instance),
+        ):
+            # Should NOT raise SystemExit
+            bot.start()
+
 
 class TestCliIntegration:
     def test_cli_start_mode_slack_calls_bot_start(self, tmp_path):

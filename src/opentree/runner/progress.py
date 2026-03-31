@@ -73,6 +73,11 @@ def build_progress_blocks(state: ProgressState, elapsed: float) -> list[dict]:
     return blocks
 
 
+# Slack Block Kit limits
+_SECTION_TEXT_LIMIT = 3000     # max chars per section text field
+_TOTAL_TEXT_LIMIT = 12000      # beyond this, add truncation indicator
+
+
 def build_completion_blocks(
     response_text: str,
     elapsed: float,
@@ -83,23 +88,29 @@ def build_completion_blocks(
 ) -> list[dict]:
     """Build Block Kit blocks for the final response.
 
-    - Success: response text + token stats
-    - Error: error message with :x: prefix
-    - Empty response: warning indicator
+    - Success: response text + token stats.  Long responses (> 3000 chars)
+      are split into multiple section blocks.  If the total text exceeds
+      12 000 chars a "(truncated)" indicator is appended.
+    - Error: error message with :x: prefix (single section, truncated at 3000).
+    - Empty response: warning indicator.
     """
     if is_error:
         text = f":x: *Error*\n{error_message or 'An error occurred.'}"
+        blocks: list[dict] = [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": text[:_SECTION_TEXT_LIMIT]},
+            }
+        ]
     elif not response_text:
-        text = ":warning: _(no response)_"
+        blocks = [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": ":warning: _(no response)_"},
+            }
+        ]
     else:
-        text = response_text
-
-    blocks = [
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": text[:3000]},  # Slack limit
-        }
-    ]
+        blocks = _split_text_into_sections(response_text)
 
     # Stats context (only on success with token counts)
     if not is_error and (input_tokens or output_tokens):
@@ -116,6 +127,37 @@ def build_completion_blocks(
         )
 
     return blocks
+
+
+def _split_text_into_sections(text: str) -> list[dict]:
+    """Split long text into multiple section blocks.
+
+    Each section's text field is at most ``_SECTION_TEXT_LIMIT`` chars.
+    If the total text exceeds ``_TOTAL_TEXT_LIMIT``, a "(truncated)"
+    indicator is appended to the last section.
+    """
+    truncated = len(text) > _TOTAL_TEXT_LIMIT
+
+    chunks: list[str] = []
+    remaining = text
+    while remaining:
+        chunks.append(remaining[:_SECTION_TEXT_LIMIT])
+        remaining = remaining[_SECTION_TEXT_LIMIT:]
+
+    if truncated and chunks:
+        indicator = "\n\n_(truncated)_"
+        last = chunks[-1]
+        # Make room for indicator within the section limit
+        max_content = _SECTION_TEXT_LIMIT - len(indicator)
+        chunks[-1] = last[:max_content] + indicator
+
+    return [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": chunk},
+        }
+        for chunk in chunks
+    ]
 
 
 class ProgressReporter:

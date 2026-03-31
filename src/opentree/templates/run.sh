@@ -52,11 +52,25 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
+dns_resolve() {
+    # Attempt DNS resolution using the best available tool.
+    # Supports: host, getent, nslookup, ping (fallback chain for minimal containers).
+    if command -v host &>/dev/null; then
+        host "$DNS_HOST" >/dev/null 2>&1
+    elif command -v getent &>/dev/null; then
+        getent hosts "$DNS_HOST" >/dev/null 2>&1
+    elif command -v nslookup &>/dev/null; then
+        nslookup "$DNS_HOST" >/dev/null 2>&1
+    else
+        ping -c 1 -W 3 "$DNS_HOST" >/dev/null 2>&1
+    fi
+}
+
 check_network() {
     # Wait for DNS resolution to succeed before starting the bot.
     # Returns 0 on success, 1 on timeout.
     local elapsed=0
-    while ! host "$DNS_HOST" >/dev/null 2>&1; do
+    while ! dns_resolve; do
         if [ $elapsed -ge $DNS_TIMEOUT ]; then
             log "ERROR: DNS check for $DNS_HOST failed after ${DNS_TIMEOUT}s"
             return 1

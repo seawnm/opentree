@@ -1050,3 +1050,57 @@ class TestDispatcherDedup:
             import time; time.sleep(0.3)
 
         assert len(dispatcher._dispatched_ts) <= 5_001
+
+
+# ---------------------------------------------------------------------------
+# Restart admin command (exit code mechanism)
+# ---------------------------------------------------------------------------
+
+class TestRestartCommand:
+    """Tests for the 'restart' admin command."""
+
+    def test_restart_is_recognized_as_admin_command(self, tmp_path):
+        """'restart' is parsed as an admin command."""
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        result = dispatcher.parse_message("<@UBOT123> restart", "UBOT123")
+        assert result.is_admin_command
+        assert result.admin_command == "restart"
+
+    def test_restart_sets_shutdown_event(self, tmp_path):
+        """restart command sets the shutdown event (like shutdown)."""
+        shutdown_event = threading.Event()
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        task = make_task()
+        dispatcher._handle_admin_command(task, "restart")
+        assert shutdown_event.is_set()
+
+    def test_restart_sends_ack_message(self, tmp_path):
+        """restart command sends a confirmation message to Slack."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        dispatcher._handle_admin_command(task, "restart")
+        slack_api.send_message.assert_called()
+
+    def test_restart_sets_exit_code_on_dispatcher(self, tmp_path):
+        """restart command sets a non-zero exit code on the dispatcher."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        dispatcher._handle_admin_command(task, "restart")
+        assert dispatcher.exit_code == 1
+
+    def test_shutdown_exit_code_is_zero(self, tmp_path):
+        """shutdown command leaves exit_code at 0 (clean exit, no restart)."""
+        shutdown_event = threading.Event()
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        task = make_task()
+        dispatcher._handle_admin_command(task, "shutdown")
+        assert dispatcher.exit_code == 0
+
+    def test_restart_unauthorized_user(self, tmp_path):
+        """When admin_users is configured, non-admin user cannot restart."""
+        shutdown_event = threading.Event()
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        dispatcher._runner_config = RunnerConfig(admin_users=("U_ADMIN",))
+        task = make_task(user_id="U_RANDOM")
+        dispatcher._handle_admin_command(task, "restart")
+        assert not shutdown_event.is_set()

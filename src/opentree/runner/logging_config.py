@@ -24,13 +24,16 @@ def setup_logging(
     log_dir: Path,
     level: str = "INFO",
     max_days: int = 30,
-) -> None:
+) -> bool:
     """Configure logging for the bot runner.
 
     Args:
         log_dir: Directory for log files (created if missing)
         level: Root logger level (DEBUG, INFO, WARNING, ERROR)
         max_days: Days to keep old log files (default 30)
+
+    Returns:
+        True if file logging is active, False if console-only fallback.
     """
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)  # capture everything; handlers filter
@@ -47,6 +50,7 @@ def setup_logging(
     root.addHandler(console)
 
     # File handler (daily rotation)
+    file_logging_active = False
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / f"{datetime.now().strftime('%Y-%m-%d')}.log"
@@ -59,8 +63,11 @@ def setup_logging(
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(logging.Formatter(_FILE_FORMAT, datefmt=_FILE_DATE))
         root.addHandler(file_handler)
+        file_logging_active = True
     except (PermissionError, OSError) as exc:
         logging.warning("Cannot write logs to %s: %s (console-only mode)", log_dir, exc)
+
+    return file_logging_active
 
 
 def get_log_path(log_dir: Path) -> Path:

@@ -232,6 +232,98 @@ class TestBuildCompletionBlocks:
         assert all(isinstance(b, dict) for b in blocks)
 
 
+class TestBuildCompletionBlocksMultiSection:
+    """Tests for multi-section splitting when response exceeds 3000 chars."""
+
+    def _import(self):
+        from opentree.runner.progress import build_completion_blocks
+        return build_completion_blocks
+
+    def test_short_text_single_section(self):
+        """Text <= 3000 chars produces exactly one section block."""
+        build_completion_blocks = self._import()
+        blocks = build_completion_blocks("Short text", elapsed=1.0)
+        section_blocks = [b for b in blocks if b["type"] == "section"]
+        assert len(section_blocks) == 1
+
+    def test_medium_text_split_into_multiple_sections(self):
+        """Text > 3000 chars is split into multiple section blocks."""
+        build_completion_blocks = self._import()
+        text = "A" * 5000
+        blocks = build_completion_blocks(text, elapsed=1.0)
+        section_blocks = [b for b in blocks if b["type"] == "section"]
+        assert len(section_blocks) == 2
+        # Each section must be <= 3000 chars
+        for sb in section_blocks:
+            assert len(sb["text"]["text"]) <= 3000
+
+    def test_split_preserves_all_content(self):
+        """Split sections together contain the full original text."""
+        build_completion_blocks = self._import()
+        text = "B" * 7500
+        blocks = build_completion_blocks(text, elapsed=1.0)
+        section_blocks = [b for b in blocks if b["type"] == "section"]
+        combined = "".join(sb["text"]["text"] for sb in section_blocks)
+        assert combined == text
+
+    def test_exactly_3000_no_split(self):
+        """Text of exactly 3000 chars is not split."""
+        build_completion_blocks = self._import()
+        text = "C" * 3000
+        blocks = build_completion_blocks(text, elapsed=1.0)
+        section_blocks = [b for b in blocks if b["type"] == "section"]
+        assert len(section_blocks) == 1
+
+    def test_3001_chars_splits_into_two(self):
+        """Text of 3001 chars splits into two sections."""
+        build_completion_blocks = self._import()
+        text = "D" * 3001
+        blocks = build_completion_blocks(text, elapsed=1.0)
+        section_blocks = [b for b in blocks if b["type"] == "section"]
+        assert len(section_blocks) == 2
+
+    def test_truncation_indicator_for_very_long_text(self):
+        """Text > 12000 chars adds a truncation indicator."""
+        build_completion_blocks = self._import()
+        text = "E" * 15000
+        blocks = build_completion_blocks(text, elapsed=1.0)
+        section_blocks = [b for b in blocks if b["type"] == "section"]
+        # Last section should indicate truncation
+        last_section_text = section_blocks[-1]["text"]["text"]
+        assert "(truncated)" in last_section_text
+
+    def test_no_truncation_indicator_under_12000(self):
+        """Text <= 12000 chars does NOT have truncation indicator."""
+        build_completion_blocks = self._import()
+        text = "F" * 9000
+        blocks = build_completion_blocks(text, elapsed=1.0)
+        section_blocks = [b for b in blocks if b["type"] == "section"]
+        all_text = "".join(sb["text"]["text"] for sb in section_blocks)
+        assert "(truncated)" not in all_text
+
+    def test_error_not_split(self):
+        """Error messages are NOT split (they use the old single-section path)."""
+        build_completion_blocks = self._import()
+        blocks = build_completion_blocks(
+            "", elapsed=1.0, is_error=True, error_message="X" * 5000,
+        )
+        section_blocks = [b for b in blocks if b["type"] == "section"]
+        assert len(section_blocks) == 1
+
+    def test_stats_context_after_all_sections(self):
+        """Token stats context block appears after all section blocks."""
+        build_completion_blocks = self._import()
+        text = "G" * 5000
+        blocks = build_completion_blocks(
+            text, elapsed=2.0, input_tokens=100, output_tokens=50,
+        )
+        # Find index of last section and the context block
+        section_indices = [i for i, b in enumerate(blocks) if b["type"] == "section"]
+        context_indices = [i for i, b in enumerate(blocks) if b["type"] == "context"]
+        assert len(context_indices) == 1
+        assert context_indices[0] > max(section_indices)
+
+
 # ---------------------------------------------------------------------------
 # ProgressReporter
 # ---------------------------------------------------------------------------

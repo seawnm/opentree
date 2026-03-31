@@ -8,8 +8,10 @@ with the assembled system prompt.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
+import sys
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -22,6 +24,8 @@ from opentree.generator.settings import SettingsGenerator
 from opentree.generator.symlinks import SymlinkManager
 from opentree.manifest.validator import ManifestValidator
 from opentree.registry.registry import Registry
+
+logger = logging.getLogger(__name__)
 
 # Topological order: dependencies must come before dependents.
 _PRE_INSTALLED = (
@@ -77,6 +81,11 @@ def _bundled_modules_dir() -> Path:
         "Set OPENTREE_BUNDLE_DIR or run from the project root."
     )
     raise FileNotFoundError(msg)
+
+
+def _is_interactive() -> bool:
+    """Return True if stdout is connected to a TTY (interactive mode)."""
+    return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
 
 def _preflight_check(
@@ -144,6 +153,53 @@ def _install_single_module(
         link_method=link_method,
         depends_on=depends_on,
     )
+
+
+def _backup_state(opentree_home: Path) -> Path | None:
+    """Backup registry, settings, permissions, and rules for rollback.
+
+    Returns the backup directory path, or None if nothing to back up.
+    """
+    backup_dir = opentree_home / "_install_backup"
+    has_content = False
+
+    reg_path = opentree_home / "config" / "registry.json"
+    perm_path = opentree_home / "config" / "permissions.json"
+    settings_path = opentree_home / "workspace" / ".claude" / "settings.json"
+    rules_dir = opentree_home / "workspace" / ".claude" / "rules"
+
+    for src in (reg_path, perm_path, settings_path):
+        if src.exists():
+            dest = backup_dir / src.relative_to(opentree_home)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            has_content = True
+
+    if rules_dir.exists() and any(rules_dir.iterdir()):
+        dest_rules = backup_dir / rules_dir.relative_to(opentree_home)
+        if dest_rules.exists():
+            shutil.rmtree(dest_rules)
+        shutil.copytree(rules_dir, dest_rules)
+        has_content = True
+
+    return backup_dir if has_content else None
+
+
+def _restore_state(opentree_home: Path, backup_dir: Path) -> None:
+    """Restore backed-up state files after a failed install."""
+    for src in backup_dir.rglob("*"):
+        if src.is_file():
+            dest = opentree_home / src.relative_to(backup_dir)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+
+    # Restore rules directory
+    backup_rules = backup_dir / "workspace" / ".claude" / "rules"
+    final_rules = opentree_home / "workspace" / ".claude" / "rules"
+    if backup_rules.exists():
+        if final_rules.exists():
+            shutil.rmtree(final_rules)
+        shutil.copytree(backup_rules, final_rules)
 
 
 # ------------------------------------------------------------------
@@ -219,6 +275,30 @@ def init_command(
         raise typer.Exit(code=1)
 
     dest_modules = opentree_home / "modules"
+
+    # Issue 5: Warn about existing directories that --force will delete
+    if force:
+        existing_dirs = [
+            dest_modules / child.name
+            for child in sorted(bundle_dir.iterdir())
+            if child.is_dir()
+            and (child / "opentree.json").is_file()
+            and (dest_modules / child.name).exists()
+        ]
+        if existing_dirs:
+            dir_names = ", ".join(d.name for d in existing_dirs)
+            logger.warning("--force will delete: %s", dir_names)
+
+            # In interactive mode, prompt for confirmation
+            if not non_interactive and _is_interactive():
+                confirm = typer.confirm(
+                    f"--force will delete {len(existing_dirs)} existing "
+                    "module directories. Continue?"
+                )
+                if not confirm:
+                    typer.echo("Aborted.", err=True)
+                    raise typer.Exit(code=1)
+
     for child in sorted(bundle_dir.iterdir()):
         if child.is_dir() and (child / "opentree.json").is_file():
             target = dest_modules / child.name
@@ -241,6 +321,9 @@ def init_command(
             err=True,
         )
         raise typer.Exit(code=1)
+
+    # Issue 6: Transactional install — backup state before attempting
+    backup_dir = _backup_state(opentree_home)
 
     # 5. Install pre-installed modules in topo order
     engine = PlaceholderEngine(config)
@@ -267,7 +350,10 @@ def init_command(
                         + "; ".join(err_msgs),
                         err=True,
                     )
-                    raise typer.Exit(code=1)
+                    raise RuntimeError(
+                        f"Invalid manifest for '{name}': "
+                        + "; ".join(err_msgs)
+                    )
 
                 reg_data = _install_single_module(
                     opentree_home,
@@ -279,7 +365,7 @@ def init_command(
                     reg_data,
                 )
 
-            # Write settings.json and registry
+            # Write settings.json and registry ONLY after ALL succeed
             settings_gen.write_settings()
             Registry.save(reg_path, reg_data)
 
@@ -289,9 +375,27 @@ def init_command(
             claude_md = opentree_home / "workspace" / "CLAUDE.md"
             claude_md.write_text(content, encoding="utf-8")
 
+    except typer.Exit:
+        raise
     except TimeoutError as exc:
+        # Rollback on lock timeout
+        if backup_dir and backup_dir.exists():
+            logger.info("Rolling back to previous state...")
+            _restore_state(opentree_home, backup_dir)
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
+    except Exception as exc:
+        # Rollback on any install failure
+        logger.error("Module installation failed: %s", exc)
+        if backup_dir and backup_dir.exists():
+            logger.info("Rolling back to previous state...")
+            _restore_state(opentree_home, backup_dir)
+        typer.echo(f"Error: Module installation failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+    finally:
+        # Clean up backup directory on success or failure
+        if backup_dir and backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
 
     # 6. Generate bin/run.sh and config/.env.example
     bin_dir = opentree_home / "bin"

@@ -341,3 +341,60 @@ class TestMaxDays:
         for h in list(root.handlers):
             h.close()
         root.handlers.clear()
+
+
+# ---------------------------------------------------------------------------
+# Issue 7: setup_logging returns bool indicating file logging active
+# ---------------------------------------------------------------------------
+
+class TestSetupLoggingReturnsBool:
+    """setup_logging should return True when file logging is active,
+    False when falling back to console-only."""
+
+    def test_returns_true_when_file_logging_active(self, tmp_path):
+        mod = _import_module()
+        log_dir = tmp_path / "logs"
+
+        result = mod.setup_logging(log_dir)
+
+        assert result is True
+
+    def test_returns_false_when_log_dir_readonly(self, tmp_path):
+        """When log_dir cannot be created (e.g. read-only parent),
+        setup_logging should return False (console-only fallback)."""
+        import os
+        import sys
+        mod = _import_module()
+
+        # Create a read-only parent to prevent log_dir creation
+        readonly_parent = tmp_path / "readonly"
+        readonly_parent.mkdir()
+        log_dir = readonly_parent / "logs"
+
+        # On Windows/WSL, chmod may not work. Use a mock fallback.
+        if sys.platform == "win32":
+            from unittest.mock import patch
+            with patch.object(Path, "mkdir", side_effect=PermissionError("mocked")):
+                result = mod.setup_logging(log_dir)
+        else:
+            os.chmod(readonly_parent, 0o444)
+            try:
+                result = mod.setup_logging(log_dir)
+            finally:
+                os.chmod(readonly_parent, 0o755)
+
+        assert result is False
+
+    def test_return_type_is_bool(self, tmp_path):
+        mod = _import_module()
+        log_dir = tmp_path / "logs"
+
+        result = mod.setup_logging(log_dir)
+
+        assert isinstance(result, bool)
+
+    def teardown_method(self, method):
+        root = logging.getLogger()
+        for h in list(root.handlers):
+            h.close()
+        root.handlers.clear()

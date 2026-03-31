@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Bot commands recognised by the dispatcher.
 # "status" and "help" are public (available to all users).
 # "shutdown" requires admin authorization (see RunnerConfig.admin_users).
-_BOT_COMMANDS: frozenset[str] = frozenset({"status", "help", "shutdown"})
+_BOT_COMMANDS: frozenset[str] = frozenset({"status", "help", "shutdown", "restart"})
 
 # Matches a leading Slack user mention: <@UXXXXXXX>
 _MENTION_RE = re.compile(r"^<@[A-Z0-9]+>")
@@ -36,6 +36,7 @@ _HELP_TEXT = (
     "Available commands:\n"
     "  *status*   — show bot status and queue stats\n"
     "  *help*     — show this help message\n"
+    "  *restart*  — restart the bot (admin only)\n"
     "  *shutdown* — gracefully stop the bot (admin only)\n"
 )
 
@@ -89,6 +90,9 @@ class Dispatcher:
         # layer misses due to concurrent handler execution.
         self._dispatched_ts: set[str] = set()
         self._dispatched_ts_lock = threading.Lock()
+
+        # Exit code: 0 = clean shutdown, non-zero = restart requested.
+        self._exit_code: int = 0
 
         # Working directory passed to Claude CLI via --cwd.
         self._workspace_dir = str(opentree_home / "workspace")
@@ -418,18 +422,21 @@ class Dispatcher:
             self._handle_status(task)
         elif command == "help":
             self._handle_help(task)
-        elif command == "shutdown":
+        elif command in ("shutdown", "restart"):
             if (
                 self._runner_config.admin_users
                 and task.user_id not in self._runner_config.admin_users
             ):
                 self._slack.send_message(
                     task.channel_id,
-                    ":lock: Only authorized admins can use the shutdown command.",
+                    f":lock: Only authorized admins can use the {command} command.",
                     thread_ts=task.thread_ts,
                 )
                 return
-            self._handle_shutdown(task)
+            if command == "restart":
+                self._handle_restart(task)
+            else:
+                self._handle_shutdown(task)
         else:
             logger.warning("Unknown admin command: %s", command)
 
@@ -470,6 +477,7 @@ class Dispatcher:
         """Request graceful bot shutdown.
 
         Sets the shared shutdown event and notifies the user.
+        Exit code stays 0, so the wrapper script will NOT restart.
 
         Args:
             task: The task for routing the reply.
@@ -481,9 +489,34 @@ class Dispatcher:
         )
         self._shutdown.set()
 
+    def _handle_restart(self, task: Task) -> None:
+        """Request bot restart.
+
+        Sets exit code to 1 (non-zero causes wrapper to restart) and
+        triggers shutdown.
+
+        Args:
+            task: The task for routing the reply.
+        """
+        self._exit_code = 1
+        self._slack.send_message(
+            task.channel_id,
+            ":arrows_counterclockwise: Restarting...",
+            thread_ts=task.thread_ts,
+        )
+        self._shutdown.set()
+
     # ------------------------------------------------------------------
     # Stats / properties
     # ------------------------------------------------------------------
+
+    @property
+    def exit_code(self) -> int:
+        """Exit code to propagate to Bot / wrapper.
+
+        0 = clean shutdown (no restart), non-zero = restart requested.
+        """
+        return self._exit_code
 
     def get_stats(self) -> dict:
         """Return dispatcher statistics (delegates to TaskQueue).
