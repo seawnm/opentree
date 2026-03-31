@@ -210,6 +210,19 @@ Dedup 問題根因：`slack_bolt` 對同一條 @mention 訊息同時觸發 `mess
 | thread resume | PASS（session 保持） |
 | dedup verification | PASS（無重複） |
 
+### Batch 3：Multi-turn、Concurrent、Crash Recovery（commit `0fa88d8`）
+
+Batch 2 修復後，進行剩餘 E2E 場景驗證：
+
+| Test | 場景 | 結果 | 備註 |
+|------|------|------|------|
+| Multi-turn context (A7) | Turn 1: "Remember pineapple42. What is 15x3?" → "45"；Turn 2: "What was the secret word?" → "pineapple42" | PASS | 跨 turn context retained（session resume） |
+| Concurrent requests (A5) | 3 個並行請求：法國/日本/巴西首都 | PASS (3/3) | Paris, Tokyo, Brasilia — 90s 內全部回覆，無 error |
+| run.sh crash recovery (A6) | SIGTERM → graceful shutdown (exit 0, wrapper 不重啟)；SIGKILL → exit 137 → wrapper 自動重啟 | PASS | 新 PID (31864→32196)，bot 重新認證，watchdog PID 也重啟 |
+| DM messages (A3) | DOGI message-tool → Bot_Walter DM | SKIPPED | message-tool 無法 send DM 到 Bot_Walter |
+
+**E2E 總計**：7 PASS / 1 SKIPPED（所有可自動化的 E2E 項目已驗證）
+
 ### Code Review（Phase 4）
 
 E2E 修復後進行 code review，發現並修復：
@@ -241,6 +254,7 @@ E2E 驗證階段共約 8 次 agent 調用：
 - **總測試數**：824（+29 新增，原 795）
 - **整體覆蓋率**：93%
 - **新增測試**：E2E fixtures、dedup 測試、admin_users validation 測試
+- **E2E 場景總計**：7 PASS / 1 SKIPPED
 
 ### Commits
 
@@ -249,6 +263,7 @@ E2E 驗證階段共約 8 次 agent 調用：
 | `82eec96` | fix: E2E 驗證 — SlackAPI parsing + bot-to-bot mention + shutdown auth + heartbeat |
 | `54db6cc` | fix: 移除 dispatcher 冗餘 heartbeat write |
 | `72ecc6c` | fix: cross-handler dedup — single handler + Layer 2 dispatcher dedup |
+| `0fa88d8` | test: E2E Batch 3 — multi-turn context, concurrent requests, crash recovery |
 
 ---
 

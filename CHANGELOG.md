@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- E2E verification complete: status, help, Claude reply, multi-turn context, concurrent requests, crash recovery
 - **Slack Bot Runner** (`src/opentree/runner/`): 獨立的 Slack bot runtime，不依賴 DOGI 程式碼
   - `bot.py`: Bot 生命週期管理（啟動、signal handling、graceful shutdown）
   - `receiver.py`: Socket Mode 事件接收（app_mention、DM、去重、heartbeat）

@@ -61,14 +61,16 @@
   - [x] Claude reply flow（@Bot_Walter 問候 → Claude 回覆）
   - [x] Thread resume（同 thread 第二則訊息，session 保持）
   - [x] Dedup 驗證（同一事件只觸發一次回覆）
+- Batch 3 完成（commits 82eec96, 54db6cc, 72ecc6c, 0fa88d8）：
+  - [x] Thread 多輪對話測試（A7）— PASS（2 turns，pineapple42 context retained）
+  - [x] 並行請求測試（A5）— PASS（3/3：Paris, Tokyo, Brasilia，90s 內全部回覆）
+  - [x] run.sh wrapper 測試（A6）— PASS（SIGKILL → exit 137 → wrapper auto-restart，新 PID 31864→32196）
+  - [x] ~~DM 訊息測試（A3）~~ — SKIPPED（DOGI message-tool 無法 send DM 到 Bot_Walter）
 - 待測項目：
-  - [ ] Thread 多輪對話測試（longer conversation chains）
-  - [ ] 並行請求測試
-  - [ ] run.sh wrapper 測試
   - [ ] 檔案上傳測試
-  - [x] ~~DM 訊息測試~~ — SKIPPED（DOGI 無法 relay DM 到 Bot_Walter）
 - 已知問題：
   - **WSL2 bytecache**：rsync 部署後必須清理 `__pycache__`（跨檔案系統 timestamp 比較不可靠，stale .pyc 會導致行為不一致）
+- **Batch 3 完成。所有可自動化的 E2E 項目已驗證。**
 
 ---
 
@@ -155,6 +157,5 @@
 ## 下一個 Session 的建議起始點
 
 1. **完成 CLAUDE_CONFIG_DIR 驗證**（5 分鐘手動執行 verify_config_dir.sh）
-2. **完成剩餘 E2E 測試**（multi-turn context、concurrent requests、run.sh wrapper）
-3. **發布 v0.2.0**（更新版本號 + CHANGELOG 日期 + git tag）
-4. 若時間充裕，處理 P1 的 MEDIUM issues（優先：超長訊息截斷、`host` 指令 fallback）
+2. **發布 v0.2.0**（更新版本號 + CHANGELOG 日期 + git tag）
+3. 若時間充裕，處理 P1 的 MEDIUM issues（優先：超長訊息截斷、`host` 指令 fallback）

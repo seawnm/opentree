@@ -129,14 +129,19 @@
 | thread resume | Second message in same thread | PASS | Session resumed, context preserved |
 | dedup verification | Same event, single handler | PASS | No duplicate replies |
 
+### Batch 3 (commits 82eec96, 54db6cc, 72ecc6c, 0fa88d8)
+
+| Test | Scenario | Result | Notes |
+|------|----------|--------|-------|
+| Multi-turn context (A7) | Turn 1: "Remember pineapple42. What is 15x3?" → "45"; Turn 2: "What was the secret word?" → "pineapple42" | PASS | Context retained across turns via session resume |
+| Concurrent requests (A5) | 3 parallel requests: France/Japan/Brazil capital | PASS (3/3) | Paris, Tokyo, Brasilia — all replied within 90s, no errors |
+| run.sh crash recovery (A6) | SIGTERM → graceful shutdown (exit 0, no restart); SIGKILL → exit 137 → wrapper auto-restart | PASS | New PID (31864→32196), bot re-authenticated, watchdog PID also restarted |
+| DM messages (A3) | DOGI message-tool → Bot Walter DM | SKIPPED | message-tool cannot send DMs to Bot Walter |
+
 ### Not Tested (Remaining)
 
 | Test | Reason |
 |------|--------|
-| DM messages | SKIPPED (requires direct Slack client, not bot relay) |
-| Multi-turn context | Not yet tested (need longer conversation chains) |
-| Concurrent requests | Not yet tested |
-| run.sh wrapper | Not yet tested (requires process-level E2E) |
 | File upload | Not yet tested |
 
 ---
