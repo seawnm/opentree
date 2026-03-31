@@ -85,6 +85,11 @@ class Dispatcher:
         self._session_mgr = SessionManager(opentree_home / "data")
         self._task_queue = TaskQueue(self._runner_config.max_concurrent_tasks)
 
+        # Layer 2 dedup: prevents duplicate dispatch even if Receiver
+        # layer misses due to concurrent handler execution.
+        self._dispatched_ts: set[str] = set()
+        self._dispatched_ts_lock = threading.Lock()
+
         # Working directory passed to Claude CLI via --cwd.
         self._workspace_dir = str(opentree_home / "workspace")
 
@@ -138,6 +143,23 @@ class Dispatcher:
         Args:
             task: The incoming task to process.
         """
+        # Layer 2 dedup: prevents duplicate dispatch even if Receiver
+        # layer misses due to concurrent handler execution.
+        # Applies to ALL dispatches including admin commands.
+        with self._dispatched_ts_lock:
+            if task.message_ts in self._dispatched_ts:
+                logger.debug(
+                    "Skipping duplicate dispatch: message_ts=%s",
+                    task.message_ts,
+                )
+                return
+            self._dispatched_ts.add(task.message_ts)
+            if len(self._dispatched_ts) > 10_000:
+                keep = 5_000
+                self._dispatched_ts = set(
+                    sorted(self._dispatched_ts)[-keep:]
+                )
+
         parsed = self.parse_message(task.text, self._slack.bot_user_id, files=task.files)
         if parsed.is_admin_command:
             self._handle_admin_command(task, parsed.admin_command)

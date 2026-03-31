@@ -958,3 +958,95 @@ class TestPhase2Integration:
             dispatcher._process_task(task)
 
         mock_cleanup.assert_called_once_with(task.thread_ts)
+
+
+# ---------------------------------------------------------------------------
+# Dispatcher-level dedup (Layer 2)
+# ---------------------------------------------------------------------------
+
+class TestDispatcherDedup:
+    """Layer 2 dedup: Dispatcher.dispatch() rejects duplicate message_ts."""
+
+    def test_duplicate_message_ts_blocked(self, tmp_path):
+        """Second dispatch with same message_ts is silently dropped."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+
+        task1 = make_task(task_id="t1", message_ts="7000.0001", text="hello")
+        task2 = make_task(task_id="t2", message_ts="7000.0001", text="hello again")
+
+        process_calls = []
+        dispatcher._process_task = lambda t: process_calls.append(t)
+
+        with patch.object(dispatcher._task_queue, "submit", return_value=True):
+            dispatcher.dispatch(task1)
+            # Wait briefly for daemon thread to call _process_task
+            import time; time.sleep(0.3)
+            dispatcher.dispatch(task2)
+            time.sleep(0.3)
+
+        # Only one task should have been processed
+        assert len(process_calls) == 1
+        assert process_calls[0].task_id == "t1"
+
+    def test_different_message_ts_allowed(self, tmp_path):
+        """Tasks with different message_ts are both dispatched."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+
+        task1 = make_task(task_id="t1", message_ts="7000.0001", text="first")
+        task2 = make_task(task_id="t2", message_ts="7000.0002", text="second")
+
+        process_calls = []
+        dispatcher._process_task = lambda t: process_calls.append(t)
+
+        with patch.object(dispatcher._task_queue, "submit", return_value=True):
+            dispatcher.dispatch(task1)
+            import time; time.sleep(0.3)
+            dispatcher.dispatch(task2)
+            time.sleep(0.3)
+
+        assert len(process_calls) == 2
+
+    def test_admin_commands_also_deduped(self, tmp_path):
+        """Admin commands with same ts are also deduped (prevents double reply)."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+
+        # Same ts for both — second should be deduped
+        task1 = make_task(task_id="t1", message_ts="7000.0003", text="status")
+        task2 = make_task(task_id="t2", message_ts="7000.0003", text="status")
+
+        dispatcher.dispatch(task1)
+        dispatcher.dispatch(task2)
+
+        # Only first should trigger a Slack message
+        assert slack_api.send_message.call_count == 1
+
+    def test_admin_commands_different_ts_both_processed(self, tmp_path):
+        """Admin commands with different ts are both processed."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+
+        task1 = make_task(task_id="t1", message_ts="7000.0003", text="status")
+        task2 = make_task(task_id="t2", message_ts="7000.0004", text="help")
+
+        dispatcher.dispatch(task1)
+        dispatcher.dispatch(task2)
+
+        # Both should trigger Slack messages
+        assert slack_api.send_message.call_count == 2
+
+    def test_dedup_set_pruning(self, tmp_path):
+        """When dedup set exceeds 10,000 entries, it is pruned to 5,000."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+
+        # Simulate filling the dedup set
+        for i in range(10_001):
+            dispatcher._dispatched_ts.add(f"{i:013}.0000")
+
+        # Next dispatch should trigger pruning
+        task = make_task(message_ts="9999999999999.0001", text="hello")
+        dispatcher._process_task = lambda t: None
+
+        with patch.object(dispatcher._task_queue, "submit", return_value=True):
+            dispatcher.dispatch(task)
+            import time; time.sleep(0.3)
+
+        assert len(dispatcher._dispatched_ts) <= 5_001

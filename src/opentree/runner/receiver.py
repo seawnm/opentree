@@ -101,38 +101,26 @@ class Receiver:
     def _register_handlers(self) -> None:
         """Register event handlers on the bolt App.
 
-        - ``app_mention``: triggered when @bot is mentioned in any channel.
-        - ``message``: triggered for direct messages (and other message events).
+        Only the ``message`` handler is registered.  It covers all scenarios:
+        - Human @mentions in channels (Slack also fires ``app_mention``, but
+          we intentionally ignore it to avoid dual-handler race conditions).
+        - Bot-to-bot @mentions (Slack only fires ``message``, not ``app_mention``).
+        - Direct messages (channel_type == "im").
+
+        The ``app_mention`` event is still subscribed at the Slack App level
+        (required for Slack to deliver message events containing @mentions),
+        but no handler is registered for it — slack_bolt will acknowledge
+        the event and discard it.
         """
         @self._app.event("app_mention")
         def handle_mention(event: dict, say: Callable) -> None:
-            self._handle_app_mention(event, say)
+            # Intentionally empty — all @mention processing happens in
+            # handle_message to eliminate dual-handler race conditions.
+            pass
 
         @self._app.event("message")
         def handle_message(event: dict, say: Callable) -> None:
             self._handle_message(event, say)
-
-    # ------------------------------------------------------------------
-    # Private: event handlers
-    # ------------------------------------------------------------------
-
-    def _handle_app_mention(self, event: dict, say: Callable) -> None:
-        """Handle @mention events.
-
-        Steps:
-        1. Dedup check on event ``ts``.
-        2. Extract fields and build a :class:`Task`.
-        3. Call ``dispatch_callback(task)``.
-        4. Write heartbeat.
-        """
-        ts = event.get("ts", "")
-        if self._is_duplicate(ts):
-            logger.debug("Skipping duplicate app_mention: ts=%s", ts)
-            return
-
-        task = self._build_task(event)
-        self._dispatch(task)
-        self._write_heartbeat()
 
     def _handle_message(self, event: dict, say: Callable) -> None:
         """Handle DM, thread reply, and bot-to-bot @mention events.
@@ -153,6 +141,13 @@ class Receiver:
         # from killing the bot during quiet periods when only bot traffic
         # or non-DM channel messages are arriving.
         self._write_heartbeat()
+
+        # Early dedup — must happen before any filter to catch cross-handler
+        # duplicates (same ts arrives as both message and app_mention events).
+        ts = event.get("ts", "")
+        if self._is_duplicate(ts):
+            logger.debug("Skipping duplicate message: ts=%s", ts)
+            return
 
         # Ignore this bot's OWN messages (prevent self-loop)
         if event.get("user") == self._bot_user_id:
@@ -179,11 +174,6 @@ class Receiver:
             channel_type = event.get("channel_type", "")
             if channel_type != "im":
                 return
-
-        ts = event.get("ts", "")
-        if self._is_duplicate(ts):
-            logger.debug("Skipping duplicate message: ts=%s", ts)
-            return
 
         task = self._build_task(event)
         self._dispatch(task)

@@ -275,55 +275,73 @@ class TestBuildTask:
 
 
 # ---------------------------------------------------------------------------
-# _handle_app_mention
+# Channel @mention (human, via _handle_message with has_bot_mention)
 # ---------------------------------------------------------------------------
 
-class TestHandleAppMention:
-    def test_dispatches_callback_for_new_event(self):
-        callback = MagicMock()
-        r = make_receiver(dispatch_callback=callback)
-        ev = mention_event()
+class TestChannelMention:
+    """Tests for human @mentions in public channels.
 
-        r._handle_app_mention(ev, say=MagicMock())
+    Since app_mention handler is a no-op (to avoid dual-handler race),
+    all @mentions are processed by _handle_message via has_bot_mention.
+    """
+
+    def test_dispatches_callback_for_channel_mention(self):
+        callback = MagicMock()
+        r = make_receiver(dispatch_callback=callback, bot_user_id="UBOT123")
+        ev = {
+            "type": "message", "ts": "1000.0001", "user": "U001",
+            "channel": "C001", "text": "<@UBOT123> hello",
+            "channel_type": "channel",
+        }
+        r._handle_message(ev, say=MagicMock())
 
         callback.assert_called_once()
         task = callback.call_args[0][0]
         assert isinstance(task, Task)
 
-    def test_does_not_dispatch_duplicate_event(self):
+    def test_does_not_dispatch_duplicate_mention(self):
         callback = MagicMock()
-        r = make_receiver(dispatch_callback=callback)
-        ev = mention_event(ts="1000.0001")
-
-        r._handle_app_mention(ev, say=MagicMock())
-        r._handle_app_mention(ev, say=MagicMock())  # duplicate
+        r = make_receiver(dispatch_callback=callback, bot_user_id="UBOT123")
+        ev = {
+            "type": "message", "ts": "1000.0002", "user": "U001",
+            "channel": "C001", "text": "<@UBOT123> hello",
+            "channel_type": "channel",
+        }
+        r._handle_message(ev, say=MagicMock())
+        r._handle_message(ev, say=MagicMock())  # duplicate
 
         callback.assert_called_once()
 
-    def test_writes_heartbeat_after_dispatch(self, tmp_path):
+    def test_writes_heartbeat_for_channel_mention(self, tmp_path):
         path = tmp_path / "hb"
-        r = make_receiver(heartbeat_path=path)
-        ev = mention_event()
-
-        r._handle_app_mention(ev, say=MagicMock())
-
+        r = make_receiver(heartbeat_path=path, bot_user_id="UBOT123")
+        ev = {
+            "type": "message", "ts": "1000.0003", "user": "U001",
+            "channel": "C001", "text": "<@UBOT123> hello",
+            "channel_type": "channel",
+        }
+        r._handle_message(ev, say=MagicMock())
         assert path.exists()
 
     def test_marks_ts_as_processed(self):
-        r = make_receiver()
-        ev = mention_event(ts="5000.0001")
-
-        r._handle_app_mention(ev, say=MagicMock())
-
+        r = make_receiver(bot_user_id="UBOT123")
+        ev = {
+            "type": "message", "ts": "5000.0001", "user": "U001",
+            "channel": "C001", "text": "<@UBOT123> hello",
+            "channel_type": "channel",
+        }
+        r._handle_message(ev, say=MagicMock())
         assert "5000.0001" in r._processed_ts
 
     def test_passes_correct_channel_and_user(self):
         callback = MagicMock()
-        r = make_receiver(dispatch_callback=callback)
-        ev = mention_event(user="U999", channel="C999")
-
-        r._handle_app_mention(ev, say=MagicMock())
-
+        r = make_receiver(dispatch_callback=callback, bot_user_id="UBOT123")
+        ev = {
+            "type": "message", "ts": "1000.0004", "user": "U999",
+            "channel": "C999", "text": "<@UBOT123> hello",
+            "channel_type": "channel",
+        }
+        r._handle_message(ev, say=MagicMock())
         task = callback.call_args[0][0]
         assert task.user_id == "U999"
         assert task.channel_id == "C999"
@@ -575,6 +593,49 @@ class TestBotToBotMention:
         r._handle_message(ev, say=MagicMock())
 
         callback.assert_called_once()
+
+    def test_same_ts_message_events_deduped(self):
+        """Two message events with same ts are deduped (single dispatch)."""
+        callback = MagicMock()
+        r = make_receiver(dispatch_callback=callback, bot_user_id="UBOT123")
+
+        ts = "6000.0001"
+        ev1 = {
+            "type": "message", "ts": ts, "user": "U_OTHER",
+            "channel": "C001", "text": "<@UBOT123> status",
+            "channel_type": "channel",
+        }
+        ev2 = {
+            "type": "message", "ts": ts, "user": "U_OTHER_BOT",
+            "channel": "C001", "text": "<@UBOT123> status",
+            "bot_id": "B_OTHER", "channel_type": "channel",
+        }
+
+        r._handle_message(ev1, say=MagicMock())
+        r._handle_message(ev2, say=MagicMock())
+
+        callback.assert_called_once()
+
+    def test_different_ts_both_dispatched(self):
+        """Two message events with different ts are both dispatched."""
+        callback = MagicMock()
+        r = make_receiver(dispatch_callback=callback, bot_user_id="UBOT123")
+
+        ev1 = {
+            "type": "message", "ts": "6000.0002", "user": "U_OTHER_BOT",
+            "channel": "C001", "text": "<@UBOT123> help",
+            "bot_id": "B_OTHER", "channel_type": "channel",
+        }
+        ev2 = {
+            "type": "message", "ts": "6000.0003", "user": "U_OTHER_BOT",
+            "channel": "C001", "text": "<@UBOT123> status",
+            "bot_id": "B_OTHER", "channel_type": "channel",
+        }
+
+        r._handle_message(ev1, say=MagicMock())
+        r._handle_message(ev2, say=MagicMock())
+
+        assert callback.call_count == 2
 
 
 # ---------------------------------------------------------------------------
