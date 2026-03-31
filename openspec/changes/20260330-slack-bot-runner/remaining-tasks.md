@@ -47,14 +47,23 @@
   - [ ] settings.json 在指定 config dir 中是否被正確讀取
 
 ### E2E 測試剩餘項目
-- **狀態**：部分完成（基本 @mention → Claude 回覆已通過）
+- **狀態**：進行中（commit 82eec96 修復 3 CRITICAL + E2E 基礎設施）
+- 已修復：
+  - [x] SlackAPI response parsing（_extract_data helper）
+  - [x] Bot-to-bot @mention（receiver.py 允許其他 bot 的明確 @mention）
+  - [x] Shutdown 權限檢查（admin_users 設定）
+  - [x] Heartbeat 在所有事件寫入
+- 已通過：
+  - [x] Admin 指令測試 — status（DOGI → @Bot_Walter status → 回覆成功）
+- 已發現（待處理）：
+  - [ ] **Dedup 跨 handler**：message + app_mention 同一事件觸發兩次回覆（LOW）
 - 待測項目：
-  - [ ] Admin 指令測試（status / help / shutdown）
-  - [ ] DM 訊息測試（非 channel @mention 的觸發路徑）
-  - [ ] 檔案上傳測試（附件下載 + Claude 處理 + 回覆）
-  - [ ] run.sh wrapper 測試（watchdog 觸發 / crash 自動重啟 / exit 42 更新重啟）
-  - [ ] 並行請求測試（同時 2+ 請求的 task queue 行為）
-  - [ ] Thread 多輪對話測試（session resume + context 傳遞）
+  - [ ] Admin 指令測試 — help / shutdown
+  - [ ] DM 訊息測試
+  - [ ] 檔案上傳測試
+  - [ ] run.sh wrapper 測試
+  - [ ] 並行請求測試
+  - [ ] Thread 多輪對話測試（含 Claude CLI 回覆）
 
 ---
 
