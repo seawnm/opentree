@@ -6,12 +6,13 @@ and slack-query-tool CLIs, then observe Bot_Walter's responses.
 Prerequisites:
   - Bot_Walter must be running (via run.sh)
   - DOGI slack-bot must be accessible for message-tool / slack-query-tool
-  - Slack channel C0AK78CNYBU must be accessible to both bots
+  - Slack channel (E2E_CHANNEL_ID env var, default ai-room) must be accessible to both bots
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -31,7 +32,7 @@ BOT_HEARTBEAT_FILE = BOT_WALTER_HOME / "data" / "bot.heartbeat"
 BOT_PID_FILE = BOT_WALTER_HOME / "data" / "bot.pid"
 
 DOGI_DIR = Path("/mnt/e/develop/mydev/slack-bot")
-CHANNEL_ID = "C0AK78CNYBU"
+CHANNEL_ID = os.environ.get("E2E_CHANNEL_ID", "C0APZHG71B8")  # default: ai-room (cc workspace)
 BOT_USER_ID = "U0APZ9MR997"
 BOT_MENTION = f"<@{BOT_USER_ID}>"
 
@@ -41,6 +42,28 @@ SUBPROCESS_TIMEOUT = 30  # seconds for CLI calls
 # ---------------------------------------------------------------------------
 # Helpers (not fixtures — used by fixtures)
 # ---------------------------------------------------------------------------
+
+def _extract_json(output: str) -> dict[str, Any]:
+    """Extract JSON object from CLI output that may contain log lines.
+
+    DOGI CLI tools (message-tool, slack-query-tool) may print log lines
+    to stdout before the JSON result.  This helper finds the first ``{``
+    and parses only the JSON portion.
+    """
+    # Try the whole string first (fast path)
+    stripped = output.strip()
+    if stripped.startswith("{"):
+        return json.loads(stripped)
+
+    # Find the first '{' and parse from there
+    idx = output.find("{")
+    if idx >= 0:
+        return json.loads(output[idx:])
+
+    raise json.JSONDecodeError(
+        f"No JSON object found in output: {output[:200]!r}", output, 0,
+    )
+
 
 def _run_message_tool(
     text: str,
@@ -68,7 +91,7 @@ def _run_message_tool(
             f"message-tool failed (rc={result.returncode}): "
             f"stdout={result.stdout!r} stderr={result.stderr!r}"
         )
-    return json.loads(result.stdout)
+    return _extract_json(result.stdout)
 
 
 def _run_query_tool(subcommand: str, **kwargs: str) -> dict[str, Any]:
@@ -92,7 +115,7 @@ def _run_query_tool(subcommand: str, **kwargs: str) -> dict[str, Any]:
             f"slack-query-tool {subcommand} failed (rc={result.returncode}): "
             f"stdout={result.stdout!r} stderr={result.stderr!r}"
         )
-    return json.loads(result.stdout)
+    return _extract_json(result.stdout)
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +211,43 @@ def read_thread() -> Callable[..., dict[str, Any]]:
 
 
 @pytest.fixture()
+def read_thread_raw() -> Callable[..., dict[str, Any]]:
+    """Read thread with full Slack API response (including blocks).
+
+    Unlike read_thread (which uses slack-query-tool that strips blocks),
+    this fixture calls conversations.replies directly via slack_sdk.
+    """
+    from slack_sdk import WebClient
+    from dotenv import dotenv_values
+
+    # Load token without mutating os.environ
+    token = None
+    env_path = DOGI_DIR / ".env"
+    if env_path.exists():
+        values = dotenv_values(env_path)
+        token = values.get("SLACK_BOT_TOKEN")
+
+    if not token:
+        for profile_env in sorted(DOGI_DIR.glob(".env.*")):
+            values = dotenv_values(profile_env)
+            token = values.get("SLACK_BOT_TOKEN")
+            if token:
+                break
+
+    if not token:
+        pytest.skip("SLACK_BOT_TOKEN not available for raw thread reading")
+
+    client = WebClient(token=token)
+
+    def _read(thread_ts: str, limit: int = 50) -> dict[str, Any]:
+        response = client.conversations_replies(
+            channel=CHANNEL_ID, ts=thread_ts, limit=limit,
+        )
+        return {"success": True, "messages": response.get("messages", [])}
+    return _read
+
+
+@pytest.fixture()
 def wait_for_bot_reply() -> Callable[..., str]:
     """Poll a thread until Bot_Walter posts a reply.
 
@@ -218,18 +278,61 @@ def wait_for_bot_reply() -> Callable[..., str]:
             if data.get("success"):
                 messages = data.get("messages", [])
                 for msg in messages:
-                    # Bot_Walter's replies have its user ID or bot_id
+                    # Bot_Walter's replies have its user ID
                     if msg.get("user") == BOT_USER_ID:
-                        return msg.get("text", "")
-                    # Also check bot_profile for bot posts
-                    bot_profile = msg.get("bot_profile", {})
-                    if bot_profile and BOT_USER_ID in str(msg):
-                        return msg.get("text", "")
+                        text = msg.get("text", "")
+                        if ":hourglass_flowing_sand:" not in text:
+                            return text
             time.sleep(poll_interval)
 
         raise TimeoutError(
             f"Bot_Walter did not reply in thread {thread_ts} "
             f"within {timeout}s"
+        )
+    return _wait
+
+
+@pytest.fixture()
+def wait_for_nth_bot_reply() -> Callable[..., str]:
+    """Poll a thread until Bot_Walter's Nth reply appears.
+
+    Args:
+        thread_ts: The thread to monitor.
+        n: Which bot reply to wait for (1-indexed).
+        timeout: Max seconds to wait (default 180).
+        poll_interval: Seconds between polls (default 5).
+
+    Returns:
+        The text of Bot_Walter's Nth reply message.
+    """
+    def _wait(
+        thread_ts: str,
+        n: int = 1,
+        timeout: int = 180,
+        poll_interval: int = 5,
+    ) -> str:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            data = _run_query_tool(
+                "read-thread",
+                channel=CHANNEL_ID,
+                thread_ts=thread_ts,
+                limit="100",
+            )
+            if data.get("success"):
+                bot_replies = [
+                    m.get("text", "")
+                    for m in data.get("messages", [])
+                    if m.get("user") == BOT_USER_ID
+                ]
+                if len(bot_replies) >= n:
+                    reply_text = bot_replies[n - 1]
+                    # Guard: skip if still an ack spinner
+                    if ":hourglass_flowing_sand:" not in reply_text:
+                        return reply_text
+            time.sleep(poll_interval)
+        raise TimeoutError(
+            f"Bot_Walter's reply #{n} not found in thread {thread_ts} within {timeout}s"
         )
     return _wait
 
@@ -257,7 +360,7 @@ def grep_log() -> Callable[..., list[str]]:
             if after_ts is not None:
                 # Attempt to extract timestamp from log line (ISO format prefix)
                 ts_match = re.match(r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})", line)
-                if ts_match and ts_match.group(1) < after_ts:
+                if ts_match and ts_match.group(1).replace("T", " ") < after_ts.replace("T", " "):
                     continue
             if compiled.search(line):
                 matches.append(line)
