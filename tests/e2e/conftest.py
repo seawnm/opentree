@@ -12,6 +12,7 @@ Prerequisites:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -21,6 +22,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pytest
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -32,7 +35,86 @@ BOT_HEARTBEAT_FILE = BOT_WALTER_HOME / "data" / "bot.heartbeat"
 BOT_PID_FILE = BOT_WALTER_HOME / "data" / "bot.pid"
 
 DOGI_DIR = Path("/mnt/e/develop/mydev/slack-bot")
-CHANNEL_ID = os.environ.get("E2E_CHANNEL_ID", "C0APZHG71B8")  # default: ai-room (cc workspace)
+_FALLBACK_CHANNEL_ID = "C0APZHG71B8"  # ai-room (cc workspace) — last resort
+
+
+def _resolve_channel_id() -> str:
+    """Resolve E2E channel ID at module load time.
+
+    Resolution order:
+      1. E2E_CHANNEL_ID env var (explicit override)
+      2. Slack API lookup by E2E_CHANNEL_NAME (default "ai-room")
+      3. Hardcoded fallback
+    """
+    # 1. Explicit env var override
+    env_id = os.environ.get("E2E_CHANNEL_ID")
+    if env_id:
+        logger.info("CHANNEL_ID from E2E_CHANNEL_ID env var: %s", env_id)
+        return env_id
+
+    # 2. Slack API lookup by channel name
+    channel_name = os.environ.get("E2E_CHANNEL_NAME", "ai-room")
+    token = _load_slack_token()
+    if token:
+        try:
+            from slack_sdk import WebClient
+
+            client = WebClient(token=token, timeout=10)
+            cursor = None
+            while True:
+                resp = client.conversations_list(
+                    types="public_channel,private_channel",
+                    limit=200,
+                    cursor=cursor,
+                )
+                for ch in resp.get("channels", []):
+                    if ch.get("name") == channel_name:
+                        cid = ch["id"]
+                        logger.info(
+                            "CHANNEL_ID resolved via API: %s (name=%s)",
+                            cid,
+                            channel_name,
+                        )
+                        return cid
+                cursor = resp.get("response_metadata", {}).get("next_cursor")
+                if not cursor:
+                    break
+            logger.warning(
+                "Channel '%s' not found via API, falling back to hardcoded ID",
+                channel_name,
+            )
+        except Exception:
+            logger.warning(
+                "Slack API lookup failed, falling back to hardcoded ID",
+                exc_info=True,
+            )
+
+    # 3. Hardcoded fallback
+    logger.info("CHANNEL_ID using hardcoded fallback: %s", _FALLBACK_CHANNEL_ID)
+    return _FALLBACK_CHANNEL_ID
+
+
+def _load_slack_token() -> str | None:
+    """Load SLACK_BOT_TOKEN from DOGI .env files without mutating os.environ."""
+    from dotenv import dotenv_values
+
+    env_path = DOGI_DIR / ".env"
+    if env_path.exists():
+        values = dotenv_values(env_path)
+        token = values.get("SLACK_BOT_TOKEN")
+        if token:
+            return token
+
+    for profile_env in sorted(DOGI_DIR.glob(".env.*")):
+        values = dotenv_values(profile_env)
+        token = values.get("SLACK_BOT_TOKEN")
+        if token:
+            return token
+
+    return None
+
+
+CHANNEL_ID = _resolve_channel_id()
 BOT_USER_ID = "U0APZ9MR997"
 BOT_MENTION = f"<@{BOT_USER_ID}>"
 
@@ -218,22 +300,8 @@ def read_thread_raw() -> Callable[..., dict[str, Any]]:
     this fixture calls conversations.replies directly via slack_sdk.
     """
     from slack_sdk import WebClient
-    from dotenv import dotenv_values
 
-    # Load token without mutating os.environ
-    token = None
-    env_path = DOGI_DIR / ".env"
-    if env_path.exists():
-        values = dotenv_values(env_path)
-        token = values.get("SLACK_BOT_TOKEN")
-
-    if not token:
-        for profile_env in sorted(DOGI_DIR.glob(".env.*")):
-            values = dotenv_values(profile_env)
-            token = values.get("SLACK_BOT_TOKEN")
-            if token:
-                break
-
+    token = _load_slack_token()
     if not token:
         pytest.skip("SLACK_BOT_TOKEN not available for raw thread reading")
 
