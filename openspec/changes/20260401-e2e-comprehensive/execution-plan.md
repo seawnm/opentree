@@ -2,7 +2,7 @@
 
 > **建立日期**: 2026-04-01
 > **目標**: 補齊 OpenTree E2E 測試案例，對齊 DOGI 全功能，驗證模組化架構設計
-> **狀態**: 🚀 執行中
+> **狀態**: ✅ 測試碼完成，E2E 執行待 Loop 5
 > **測試頻道**: ai-room (`C0AJ63F1T9P`)
 > **決策紀錄**:
 > - 測試頻道: ai-room（已清除 Ralph 監控設定）
@@ -320,8 +320,8 @@ class TestProgressDisplay:
 | Batch 1 | ✅ 完成 | 10 tests | 2C+6H+5M 已修 | 全修 | progress/tool/token |
 | Batch 2 | ✅ 完成 | 10 tests | 共用 review | 全修 | file/memory/session |
 | Batch 3 | ✅ 完成 | 20 tests | — | — | security C1-C4 |
-| Batch 4 | ⬜ 待確認 | | | | extensions D1-D3 |
-| Batch 5 | ⬜ 待確認 | | | | UX/resilience E1-E4 |
+| Batch 4 | ✅ 完成 | 7 tests | 1C+3H+2M+2L 已修 | 全修 | extensions D1-D3 |
+| Batch 5 | ✅ 完成 | 12 tests | 3H+4M+2L 已修 | 全修 | UX/resilience E1-E4 |
 
 ### 7.2 測試覆蓋率目標
 

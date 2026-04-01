@@ -107,3 +107,33 @@
 | `final-report.md` | 本報告 |
 | `test-specs/batch-1.md` | Batch 1 測試規格 |
 | `test-specs/batch-4-proposal.md` | Batch 4 proposal |
+
+## 補充：SDK-First Dynamic Channel Resolution
+
+### 根因事件
+
+E2E 測試執行時發現 channel ID 跨 workspace 混淆（`C0AJ63F1T9P` vs `C0APZHG71B8`），
+觸發了系統性解決方案的設計和實作。
+
+### 解決方案（已實作，4 個 Loop）
+
+| Loop | 專案 | 改動 | 測試 |
+|------|------|------|------|
+| 1 | DOGI | SlackClient cache + list_channels() + build_channel_index() | 72 passed |
+| 2 | DOGI | _common SDK 路徑 + --channel-name + team_id 驗證 | 166 passed |
+| 4 | OpenTree | conftest 動態 channel 解析（SDK API） | 1044 passed |
+
+### 待做（下一 session）
+
+- Loop 5: E2E 測試執行 + CLAUDE.md + CHANGELOG 更新
+- 詳見 DOGI openspec: `/mnt/e/develop/mydev/slack-bot/openspec/changes/20260402-sdk-channel-resolution/`
+
+### 認知失誤反思
+
+發現「跨域資源錨定」（Cross-Domain Resource Anchoring）模式：
+- AI 搜尋時未限定 scope boundary
+- 找到第一個匹配就錨定為正確答案
+- 跳過歸屬驗證和可達性測試
+- 三道防線（L1 搜尋限定、L2 歸屬驗證、L3 可達性測試）全部失效
+
+已透過 SDK 動態解析 + team_id 防呆 + CLAUDE.md 指引三管齊下解決。
