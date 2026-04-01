@@ -31,3 +31,4 @@ data/
 # Temp
 /tmp/
 *.tmp
+.coverage
