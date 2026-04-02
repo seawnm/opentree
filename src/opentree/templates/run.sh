@@ -196,6 +196,35 @@ trap 'stop_watchdog' EXIT
 
 mkdir -p "$LOG_DIR" "$DATA_DIR"
 
+# -- Singleton lock: prevent multiple wrappers from running concurrently --
+LOCK_FILE="$DATA_DIR/wrapper.lock"
+exec 200>"$LOCK_FILE"
+if ! flock -n 200; then
+    log "ERROR: Another wrapper is already running (lock: $LOCK_FILE). Exiting."
+    exit 1
+fi
+# Lock held on fd 200 until script exits (auto-released on crash/SIGKILL too)
+
+# -- Stale process cleanup: kill orphaned bot from previous run --
+if [ -f "$PID_FILE" ]; then
+    stale_pid=$(cat "$PID_FILE" 2>/dev/null | tr -d '[:space:]')
+    if [ -n "$stale_pid" ] && kill -0 "$stale_pid" 2>/dev/null; then
+        log "WARNING: Found stale bot process (PID: $stale_pid), sending SIGTERM..."
+        kill -TERM "$stale_pid" 2>/dev/null || true
+        for i in $(seq 1 30); do
+            kill -0 "$stale_pid" 2>/dev/null || break
+            sleep 1
+        done
+        if kill -0 "$stale_pid" 2>/dev/null; then
+            log "WARNING: Stale process did not exit after 30s, sending SIGKILL"
+            kill -9 "$stale_pid" 2>/dev/null || true
+            sleep 2
+        fi
+        log "Stale process cleaned up"
+    fi
+    rm -f "$PID_FILE"
+fi
+
 WATCHDOG_PID=""
 BOT_PID=""
 crash_count=0

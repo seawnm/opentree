@@ -349,7 +349,14 @@ def wait_for_bot_reply() -> Callable[..., str]:
                     # Bot_Walter's replies have its user ID
                     if msg.get("user") == BOT_USER_ID:
                         text = msg.get("text", "")
-                        if ":hourglass_flowing_sand:" not in text:
+                        # Skip progress/spinner and queue messages
+                        if (
+                            ":hourglass_flowing_sand:" not in text
+                            and ":brain:" not in text
+                            and ":hammer_and_wrench:" not in text
+                            and ":writing_hand:" not in text
+                            and "queued" not in text.lower()
+                        ):
                             return text
             time.sleep(poll_interval)
 
@@ -395,8 +402,14 @@ def wait_for_nth_bot_reply() -> Callable[..., str]:
                 ]
                 if len(bot_replies) >= n:
                     reply_text = bot_replies[n - 1]
-                    # Guard: skip if still an ack spinner
-                    if ":hourglass_flowing_sand:" not in reply_text:
+                    # Guard: skip progress/spinner and queue messages
+                    if (
+                        ":hourglass_flowing_sand:" not in reply_text
+                        and ":brain:" not in reply_text
+                        and ":hammer_and_wrench:" not in reply_text
+                        and ":writing_hand:" not in reply_text
+                        and "queued" not in reply_text.lower()
+                    ):
                         return reply_text
             time.sleep(poll_interval)
         raise TimeoutError(
@@ -454,14 +467,29 @@ def check_heartbeat() -> Callable[[], tuple[bool, float]]:
 
 @pytest.fixture()
 def check_bot_alive() -> Callable[[], bool]:
-    """Check if the bot process is running via pgrep.
+    """Check if the bot process is running.
+
+    Primary: read PID file and verify process exists.
+    Fallback: pgrep with precise pattern (avoids matching test runner).
 
     Returns:
-        True if at least one matching process is found.
+        True if the bot process is confirmed running.
     """
     def _check() -> bool:
+        import os as _os
+
+        # Primary: PID file (ground truth)
+        if BOT_PID_FILE.exists():
+            try:
+                pid = int(BOT_PID_FILE.read_text().strip())
+                _os.kill(pid, 0)  # probe only
+                return True
+            except (ValueError, ProcessLookupError, PermissionError, OSError):
+                pass
+
+        # Fallback: precise pgrep pattern
         result = subprocess.run(
-            ["pgrep", "-f", "opentree"],
+            ["pgrep", "-f", "opentree start --mode slack"],
             capture_output=True,
             text=True,
             timeout=5,

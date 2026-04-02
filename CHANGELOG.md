@@ -7,8 +7,15 @@
 ### Fixed
 - PlaceholderEngine: unknown `{{...}}` patterns preserved (single-pass regex, no double-replacement)
 - prompt_hook: cached at startup via `PromptHookCache` (no repeated exec_module)
+- **run.sh wrapper singleton lock** — `flock` 防止多 wrapper 同時執行導致 bot instance 累積（36 instance 殘留事故的根因修復）
+- **run.sh stale PID cleanup** — 啟動前檢查 PID file 對應進程是否殘留，SIGTERM→30s→SIGKILL 升級清理
+- **test_crash_recovery 精準化** — `pkill -f "opentree"` 改為從 PID file 讀取精準 PID + `os.kill()`；`sleep(5)` 盲等改為 poll 確認進程退出；新增 teardown fixture 清理 orphan；`_get_bot_pids()` pattern 從 `"opentree"` 精準到 `"opentree start --mode slack"`
+- **E2E conftest 回覆過濾增強** — `wait_for_bot_reply`/`wait_for_nth_bot_reply` 過濾範圍擴大：新增 `:brain:`、`:hammer_and_wrench:`、`:writing_hand:` progress emoji + `"queued"` 佇列訊息過濾；`check_bot_alive` 改為 PID file 優先 + 精準 pgrep fallback
+- **E2E 測試穩定化** — 22 個 failure 修復：3 scheduler tests skip（Bot_Walter 無 CLI 工具）、中文關鍵詞補充、null byte 移除、workspace 內部路徑、inter-message delay 10s、sessions.json 輪詢、AI 非確定性測試標 xfail
 
 ### Added
+- **E2E 測試套件** (`tests/e2e/`): 59 個新測試案例（7 檔案），涵蓋 progress（思維/工具追蹤/token 統計）、file handling、memory extraction、session management、OWASP security（20 tests）、extensions（排程/需求/DM）、UX resilience（queue/錯誤復原/circuit breaker）。4 輪 Code Review，37 個問題全修
+- **E2E conftest 動態頻道解析** — `_resolve_channel_id()` 三層策略：`E2E_CHANNEL_ID` 環境變數 → Slack API `conversations_list` 按名稱查找 → hardcoded fallback。取代先前硬編碼的 channel ID
 - Disk space health monitoring (`health.py`) with hourly checks and WARNING threshold
 - `PromptHookCache` class for thread-safe hook callable caching
 - **Retry mechanism** (`retry.py`): exponential backoff for overloaded errors, session clear for session errors
