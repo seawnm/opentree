@@ -49,7 +49,7 @@ DNS_CHECK_INTERVAL=5          # seconds between DNS attempts
 # ---- Functions ----
 
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
 }
 
 dns_resolve() {
@@ -76,7 +76,7 @@ check_network() {
             return 1
         fi
         log "Waiting for network... (${elapsed}s/${DNS_TIMEOUT}s)"
-        sleep $DNS_CHECK_INTERVAL
+        sleep "$DNS_CHECK_INTERVAL"
         elapsed=$((elapsed + DNS_CHECK_INTERVAL))
     done
     [ $elapsed -gt 0 ] && log "Network restored (waited ${elapsed}s)"
@@ -89,10 +89,10 @@ start_watchdog() {
     # then SIGKILL if it doesn't exit within WATCHDOG_SIGKILL_WAIT.
     (
         # Grace period: let the bot initialize and write first heartbeat
-        sleep $WATCHDOG_INIT_DELAY
+        sleep "$WATCHDOG_INIT_DELAY"
 
         while true; do
-            sleep $WATCHDOG_INTERVAL
+            sleep "$WATCHDOG_INTERVAL"
 
             # Read PID from file (bot.py writes this)
             local bot_pid
@@ -243,7 +243,7 @@ while true; do
 
     if [ $crash_count -ge $MAX_CRASHES ]; then
         log "CRASH LOOP: $crash_count crashes within ${CRASH_WINDOW}s. Cooling down ${COOLDOWN}s..."
-        sleep $COOLDOWN
+        sleep "$COOLDOWN"
         crash_count=0
         crash_window_start=$(date +%s)
     fi

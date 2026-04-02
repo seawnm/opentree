@@ -98,8 +98,6 @@ class Bot:
                 "File logging unavailable (log_dir: %s); running in console-only mode",
                 log_dir,
             )
-        logger.info("OpenTree Bot starting (home: %s)", self._home)
-
         bot_token, app_token = self._load_tokens()
 
         # Step 2: initialize SlackAPI and verify credentials

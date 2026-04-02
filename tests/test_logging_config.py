@@ -98,7 +98,10 @@ class TestSetupLoggingAddsHandlers:
 
     def teardown_method(self, method):
         """Reset root logger handlers after each test to avoid cross-test pollution."""
-        logging.getLogger().handlers.clear()
+        root = logging.getLogger()
+        for h in list(root.handlers):
+            h.close()
+        root.handlers.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +120,10 @@ class TestSetupLoggingNoDuplicates:
         assert len(root.handlers) == 2
 
     def teardown_method(self, method):
-        logging.getLogger().handlers.clear()
+        root = logging.getLogger()
+        for h in list(root.handlers):
+            h.close()
+        root.handlers.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +175,10 @@ class TestSetupLoggingCustomLevel:
         assert file_handlers[0].level == logging.DEBUG
 
     def teardown_method(self, method):
-        logging.getLogger().handlers.clear()
+        root = logging.getLogger()
+        for h in list(root.handlers):
+            h.close()
+        root.handlers.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +284,10 @@ class TestConsoleFormat:
         assert "%(name)s" not in fmt_str
 
     def teardown_method(self, method):
-        logging.getLogger().handlers.clear()
+        root = logging.getLogger()
+        for h in list(root.handlers):
+            h.close()
+        root.handlers.clear()
 
 
 class TestFileFormat:
