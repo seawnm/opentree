@@ -244,14 +244,6 @@ class TestSessionManagement:
             f"got: {reply_3[:500]}"
         )
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason=(
-            "Session persistence depends on Claude CLI returning a valid "
-            "session_id. Under bot load, the task may complete but "
-            "session_id may be empty (not persisted)."
-        ),
-    )
     def test_session_stored_in_sessions_json(
         self,
         bot_mention: str,

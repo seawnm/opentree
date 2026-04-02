@@ -70,13 +70,6 @@ class TestFileHandling:
             f"Expected file content reference in bot reply but got: {reply[:500]}"
         )
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason=(
-            "Error message format depends on bot language and load state. "
-            "Under load, may return queue message instead of error indication."
-        ),
-    )
     def test_file_not_found_handled_gracefully(
         self,
         bot_mention: str,
@@ -117,12 +110,20 @@ class TestFileHandling:
         bot_mention: str,
         send_message: Callable[..., dict[str, Any]],
         wait_for_bot_reply: Callable[..., str],
+        drain_bot_queue: Callable[[], None],
     ) -> None:
         """驗證任務完成後 temp 目錄被清理。
 
         發送一個觸發 Read 工具的請求，完成後檢查 /tmp/opentree/{thread_ts}/
         目錄不存在（已被 cleanup_temp 清除）。
+
+        NOTE: Earlier tests in this class (including xfail ones) send
+        messages that occupy the bot queue.  We drain the queue first so
+        this test's request is processed promptly and does not time out.
         """
+        # Ensure any previously queued bot tasks have finished
+        drain_bot_queue()
+
         result = send_message(
             f"{bot_mention} read /mnt/e/develop/mydev/opentree/pyproject.toml "
             "and tell me the version"

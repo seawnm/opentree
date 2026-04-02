@@ -419,6 +419,60 @@ def wait_for_nth_bot_reply() -> Callable[..., str]:
 
 
 @pytest.fixture()
+def drain_bot_queue() -> Callable[[], None]:
+    """Send a lightweight ping and wait for a reply to ensure the bot queue
+    is drained before continuing.
+
+    This is useful when a test depends on the bot being idle — for example
+    after preceding tests that fire xfail requests which still occupy the
+    bot's task queue.
+
+    The fixture sends a short "echo" message in a fresh thread and blocks
+    until the bot replies (up to 300 s).  Once the bot responds, we know
+    all previously queued tasks have been processed.
+    """
+    def _drain() -> None:
+        import uuid
+
+        nonce = uuid.uuid4().hex[:8]
+        marker = f"drain-{nonce}"
+        text = f"{BOT_MENTION} Say exactly: '{marker}'"
+
+        result = _run_message_tool(text, channel=CHANNEL_ID)
+        thread_ts = result["message_ts"]
+
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            data = _run_query_tool(
+                "read-thread",
+                channel=CHANNEL_ID,
+                thread_ts=thread_ts,
+                limit="20",
+            )
+            if data.get("success"):
+                for msg in data.get("messages", []):
+                    if msg.get("user") == BOT_USER_ID:
+                        msg_text = msg.get("text", "")
+                        if (
+                            ":hourglass_flowing_sand:" not in msg_text
+                            and ":brain:" not in msg_text
+                            and ":hammer_and_wrench:" not in msg_text
+                            and ":writing_hand:" not in msg_text
+                            and "queued" not in msg_text.lower()
+                        ):
+                            # Bot responded — queue is clear
+                            return
+            time.sleep(5)
+
+        logger.warning(
+            "drain_bot_queue: bot did not reply to ping within 300s "
+            "(thread_ts=%s). Proceeding anyway.",
+            thread_ts,
+        )
+    return _drain
+
+
+@pytest.fixture()
 def grep_log() -> Callable[..., list[str]]:
     """Search today's bot log for lines matching a pattern.
 
