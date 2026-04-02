@@ -139,10 +139,21 @@
 | .env.example placeholder 通過驗證 | sentinel 檢查攔截 `xoxb-your-bot-token` 等佔位符 | ✅ 已修復 |
 | logging handlers.clear() 未 close | 已在 commit 7e4bd65 修復 | ✅ 先前已修復 |
 
-### bot_walter 正式部署（deferred to P2）
-- [ ] 從 E2E 測試環境升級為正式長期運行
-- [ ] 設定 systemd / screen / nohup 持久化方案
-- [ ] 確認 log rotation 在長時間運行下正常運作
+### bot_walter 正式部署 — ✅ 完成
+
+**部署方式**：`nohup bash bin/run.sh >> data/logs/wrapper.log 2>&1 &`
+
+WSL2 環境評估結果：
+- systemd 已安裝但未啟用（PID 1 = init，需 `/etc/wsl.conf` 設定 `[boot] systemd=true`）
+- screen/tmux 可用但非必要
+- `bin/run.sh` 已有完整防護：flock singleton + watchdog + auto-restart + crash loop + stale PID cleanup
+- nohup 方式已足夠，不需額外 process manager
+
+已驗證項目：
+- [x] 從 E2E 測試環境升級為正式長期運行（v0.3.0）
+- [x] nohup + bin/run.sh 持久化方案（flock 防多 instance）
+- [x] log rotation 正常運作（TimedRotatingFileHandler, midnight, 30 天保留）
+- [x] 根目錄舊 run.sh 已刪除（避免誤用 DOGI runtime）
 
 ---
 
