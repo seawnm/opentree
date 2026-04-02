@@ -110,8 +110,8 @@ class TestConfigEnvironment:
         assert perms.exists(), f"Permissions not found: {perms}"
 
     def test_run_sh_exists(self, bot_home: Path) -> None:
-        """run.sh wrapper should exist."""
-        run_sh = bot_home / "run.sh"
+        """bin/run.sh wrapper should exist."""
+        run_sh = bot_home / "bin" / "run.sh"
         assert run_sh.exists(), f"run.sh not found: {run_sh}"
 
     def test_workspace_claude_md_exists(self, bot_home: Path) -> None:
