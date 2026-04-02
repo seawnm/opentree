@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-03
+
 ### Fixed
 - PlaceholderEngine: unknown `{{...}}` patterns preserved (single-pass regex, no double-replacement)
 - prompt_hook: cached at startup via `PromptHookCache` (no repeated exec_module)
