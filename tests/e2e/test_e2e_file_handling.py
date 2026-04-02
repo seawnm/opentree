@@ -34,13 +34,6 @@ _TEMP_BASE = DEFAULT_TEMP_BASE
 class TestFileHandling:
     """B4: file reference reading, error handling, and temp cleanup."""
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason=(
-            "File reading depends on Claude CLI accessing workspace files. "
-            "Under bot load, may return queue message instead of file content."
-        ),
-    )
     def test_bot_processes_file_reference(
         self,
         bot_mention: str,
