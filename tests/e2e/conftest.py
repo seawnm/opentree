@@ -7,6 +7,11 @@ Prerequisites:
   - Bot_Walter must be running (via run.sh)
   - DOGI slack-bot must be accessible for message-tool / slack-query-tool
   - Slack channel (E2E_CHANNEL_ID env var, default ai-room) must be accessible to both bots
+
+Concurrency control:
+  - E2E_MAX_CONCURRENT: max simultaneous pending bot interactions (default 5)
+  - E2E_QUEUE_TIMEOUT: max wait for bot reply before timeout (default 300s / 5min)
+  - E2E_MAX_TIMEOUT_FAILURES: abort suite after N cumulative timeouts (default 3)
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +42,19 @@ BOT_PID_FILE = BOT_WALTER_HOME / "data" / "bot.pid"
 
 DOGI_DIR = Path("/mnt/e/develop/mydev/slack-bot")
 _FALLBACK_CHANNEL_ID = "C0APZHG71B8"  # ai-room (cc workspace) — last resort
+
+# ---------------------------------------------------------------------------
+# E2E Concurrency Control
+# ---------------------------------------------------------------------------
+
+E2E_MAX_CONCURRENT = int(os.environ.get("E2E_MAX_CONCURRENT", "5"))
+E2E_QUEUE_TIMEOUT = int(os.environ.get("E2E_QUEUE_TIMEOUT", "300"))  # 5 minutes
+E2E_MAX_TIMEOUT_FAILURES = int(os.environ.get("E2E_MAX_TIMEOUT_FAILURES", "3"))
+
+# Session-level shared state (thread-safe)
+_e2e_semaphore = threading.Semaphore(E2E_MAX_CONCURRENT)
+_e2e_timeout_count = 0
+_e2e_timeout_lock = threading.Lock()
 
 
 def _resolve_channel_id() -> str:
@@ -332,38 +351,58 @@ def wait_for_bot_reply() -> Callable[..., str]:
     """
     def _wait(
         thread_ts: str,
-        timeout: int = 120,
+        timeout: int = E2E_QUEUE_TIMEOUT,
         poll_interval: int = 5,
     ) -> str:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            data = _run_query_tool(
-                "read-thread",
-                channel=CHANNEL_ID,
-                thread_ts=thread_ts,
-                limit="50",
-            )
-            if data.get("success"):
-                messages = data.get("messages", [])
-                for msg in messages:
-                    # Bot_Walter's replies have its user ID
-                    if msg.get("user") == BOT_USER_ID:
-                        text = msg.get("text", "")
-                        # Skip progress/spinner and queue messages
-                        if (
-                            ":hourglass_flowing_sand:" not in text
-                            and ":brain:" not in text
-                            and ":hammer_and_wrench:" not in text
-                            and ":writing_hand:" not in text
-                            and "queued" not in text.lower()
-                        ):
-                            return text
-            time.sleep(poll_interval)
+        global _e2e_timeout_count
 
-        raise TimeoutError(
-            f"Bot_Walter did not reply in thread {thread_ts} "
-            f"within {timeout}s"
-        )
+        # Acquire concurrency slot
+        _e2e_semaphore.acquire()
+        try:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                data = _run_query_tool(
+                    "read-thread",
+                    channel=CHANNEL_ID,
+                    thread_ts=thread_ts,
+                    limit="50",
+                )
+                if data.get("success"):
+                    messages = data.get("messages", [])
+                    for msg in messages:
+                        # Bot_Walter's replies have its user ID
+                        if msg.get("user") == BOT_USER_ID:
+                            text = msg.get("text", "")
+                            # Skip progress/spinner and queue messages
+                            if (
+                                ":hourglass_flowing_sand:" not in text
+                                and ":brain:" not in text
+                                and ":hammer_and_wrench:" not in text
+                                and ":writing_hand:" not in text
+                                and "queued" not in text.lower()
+                            ):
+                                return text
+                time.sleep(poll_interval)
+
+            # Timeout — increment counter and check abort threshold
+            with _e2e_timeout_lock:
+                _e2e_timeout_count += 1
+                count = _e2e_timeout_count
+
+            if count >= E2E_MAX_TIMEOUT_FAILURES:
+                pytest.exit(
+                    f"E2E ABORT: {count} cumulative timeouts reached "
+                    f"(threshold: {E2E_MAX_TIMEOUT_FAILURES}). "
+                    "Bot may be unresponsive.",
+                    returncode=1,
+                )
+
+            raise TimeoutError(
+                f"Bot_Walter did not reply in thread {thread_ts} "
+                f"within {timeout}s (timeout {count}/{E2E_MAX_TIMEOUT_FAILURES})"
+            )
+        finally:
+            _e2e_semaphore.release()
     return _wait
 
 

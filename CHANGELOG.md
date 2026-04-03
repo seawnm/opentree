@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Added
+- **`opentree module update` 指令** — 比對 bundled vs installed 版本，支援 `--all`/`--dry-run`/`--force`。純 Python tuple-based semver 比較（無外部依賴）。新增 `core/version.py`
+
+### Fixed
+- **TaskQueue promotion 不 spawn worker thread** — `_promote_next_locked()` 將 pending task 標記為 RUNNING 但沒有通知 Dispatcher spawn worker thread。concurrent messages 時 promoted task 永久佔用 running slot，後續 task 全部卡在 pending。修復：`mark_completed`/`mark_failed` 回傳 promoted tasks，`Dispatcher._spawn_promoted()` 為每個 promoted task spawn thread
+- **test_initial_ack_sent** — 改用 `read_thread_raw`（SDK 直接呼叫）保留 Block Kit blocks；assertion 改為檢查非 ack 狀態（不含 hourglass + 非空）取代字串長度比較
+- **temp_file_cleanup flaky** — 新增 `drain_bot_queue` conftest fixture，測試前送 ping 等 bot 回覆確認 queue 清空
+- **2 個 xfail 升級為 hard pass** — `test_file_not_found_handled_gracefully`、`test_session_stored_in_sessions_json` 在單 instance 環境穩定通過
+- **LOW issues 批次修復** — run.sh log() 導向 stderr、sleep 變數加引號、bot.py 移除重複 startup log、test_logging teardown 標準化 h.close()
+
 ## [0.3.0] - 2026-04-03
 
 ### Fixed
