@@ -63,18 +63,45 @@ def _enforce_single_bot_instance():
     Multiple instances cause queue saturation, duplicate replies, and
     unreliable test results. This guard ensures a clean single-instance
     environment before any test runs.
+
+    Detection method: read PID file (ground truth), then cross-check
+    with pgrep to detect orphans not tracked by the PID file.
     """
+    pid_file = BOT_PID_FILE
+    instances = 0
+
+    # Check 1: PID file — the legitimate instance
+    if pid_file.exists():
+        try:
+            recorded_pid = int(pid_file.read_text().strip())
+            os.kill(recorded_pid, 0)  # probe: is it alive?
+            instances += 1
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass  # stale PID file or dead process
+
+    # Check 2: pgrep — catch orphans not tracked by PID file
     result = subprocess.run(
         ["pgrep", "-f", "opentree start --mode slack"],
         capture_output=True, text=True, timeout=5,
     )
-    pids = [p for p in result.stdout.strip().split("\n") if p.strip()]
-    # uv run parent + opentree child = 2 processes per instance
-    # Allow 0 (precheck will catch) or 1-2 (single instance)
-    if len(pids) > 2:
+    pgrep_pids = [
+        int(p) for p in result.stdout.strip().split("\n")
+        if p.strip()
+    ]
+    # Exclude uv parent processes (they just wrap the real bot)
+    bot_pids = []
+    for pid in pgrep_pids:
+        try:
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode()
+            if "uv" not in cmdline.split("\x00")[0]:
+                bot_pids.append(pid)
+        except (FileNotFoundError, PermissionError):
+            bot_pids.append(pid)  # can't read /proc → count it
+
+    if len(bot_pids) > 1:
         pytest.exit(
-            f"E2E ABORT: {len(pids)} bot processes detected (expected ≤2 for "
-            f"single instance). PIDs: {pids}. "
+            f"E2E ABORT: {len(bot_pids)} bot instances detected "
+            f"(expected exactly 1). PIDs: {bot_pids}. "
             "Kill extra instances before running E2E tests.",
             returncode=1,
         )
