@@ -50,6 +50,7 @@ class Task:
     started_at: float = 0.0
     completed_at: float = 0.0
     files: list[dict] = field(default_factory=list)  # attached files
+    queued_ack_ts: str = ""  # ts of the "queued" ack message (for cleanup)
 
 
 class TaskQueue:

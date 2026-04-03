@@ -167,6 +167,15 @@ class SlackAPI:
             logger.error("update_message failed (channel=%s, ts=%s): %s", channel, ts, exc)
             return {}
 
+    def delete_message(self, channel: str, ts: str) -> bool:
+        """Delete a message. Returns True on success."""
+        try:
+            self._client.chat_delete(channel=channel, ts=ts)
+            return True
+        except Exception as exc:
+            logger.warning("delete_message failed (channel=%s, ts=%s): %s", channel, ts, exc)
+            return False
+
     # ------------------------------------------------------------------
     # Thread
     # ------------------------------------------------------------------

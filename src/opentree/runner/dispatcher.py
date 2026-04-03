@@ -201,12 +201,15 @@ class Dispatcher:
             )
             thread.start()
         else:
-            # Task was queued; send acknowledgement.
-            self._slack.send_message(
+            # Task was queued; send acknowledgement and store ts for cleanup.
+            ack_result = self._slack.send_message(
                 task.channel_id,
                 "Your request is queued and will be processed shortly.",
                 thread_ts=task.thread_ts,
             )
+            ack_ts = ack_result.get("ts", "")
+            if ack_ts:
+                task.queued_ack_ts = ack_ts
 
     def _spawn_promoted(self, promoted: list[Task]) -> None:
         """Spawn worker threads for tasks promoted from the pending queue.
@@ -255,6 +258,11 @@ class Dispatcher:
         Args:
             task: The task to execute.
         """
+        # Clean up "queued" ack message if task was promoted from pending.
+        if task.queued_ack_ts:
+            self._slack.delete_message(task.channel_id, task.queued_ack_ts)
+            task.queued_ack_ts = ""
+
         reporter = ProgressReporter(
             slack_api=self._slack,
             channel=task.channel_id,
