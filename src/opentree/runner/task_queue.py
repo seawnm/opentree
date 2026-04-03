@@ -118,20 +118,28 @@ class TaskQueue:
 
             self._start_task_locked(task)
 
-    def mark_completed(self, task: Task) -> None:
-        """Mark task as completed and promote next eligible pending task."""
+    def mark_completed(self, task: Task) -> list[Task]:
+        """Mark task as completed and promote next eligible pending tasks.
+
+        Returns a list of tasks that were promoted to RUNNING status.
+        The caller is responsible for spawning worker threads for them.
+        """
         with self._lock:
             self._finish_task_locked(task, TaskStatus.COMPLETED)
             self._completed_count += 1
             task.completed_at = time.time()
-            self._promote_next_locked()
+            return self._promote_next_locked()
 
-    def mark_failed(self, task: Task) -> None:
-        """Mark task as failed and promote next eligible pending task."""
+    def mark_failed(self, task: Task) -> list[Task]:
+        """Mark task as failed and promote next eligible pending tasks.
+
+        Returns a list of tasks that were promoted to RUNNING status.
+        The caller is responsible for spawning worker threads for them.
+        """
         with self._lock:
             self._finish_task_locked(task, TaskStatus.FAILED)
             self._failed_count += 1
-            self._promote_next_locked()
+            return self._promote_next_locked()
 
     def get_next_ready(self) -> Optional[Task]:
         """Return the next pending task that can start, or None.
@@ -213,8 +221,12 @@ class TaskQueue:
             if not still_running:
                 self._thread_running.discard(task.thread_ts)
 
-    def _promote_next_locked(self) -> None:
-        """Internal: start as many pending tasks as slots allow. Caller must hold _lock."""
+    def _promote_next_locked(self) -> list[Task]:
+        """Internal: start as many pending tasks as slots allow. Caller must hold _lock.
+
+        Returns the list of promoted tasks so the caller can spawn worker threads.
+        """
+        promoted: list[Task] = []
         i = 0
         while i < len(self._pending):
             if len(self._running) >= self._max_concurrent:
@@ -223,6 +235,7 @@ class TaskQueue:
             if self._can_start_locked(candidate):
                 self._pending.pop(i)
                 self._start_task_locked(candidate)
+                promoted.append(candidate)
                 logger.debug(
                     "task %s promoted from pending (running=%d)",
                     candidate.task_id,
@@ -232,3 +245,4 @@ class TaskQueue:
                 i = 0
             else:
                 i += 1
+        return promoted

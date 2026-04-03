@@ -208,6 +208,27 @@ class Dispatcher:
                 thread_ts=task.thread_ts,
             )
 
+    def _spawn_promoted(self, promoted: list[Task]) -> None:
+        """Spawn worker threads for tasks promoted from the pending queue.
+
+        Called after mark_completed/mark_failed to ensure promoted tasks
+        actually get processed (fixes the stuck-slot bug where promoted
+        tasks occupied a running slot without a worker thread).
+        """
+        for ptask in promoted:
+            thread = threading.Thread(
+                target=self._process_task,
+                args=(ptask,),
+                daemon=True,
+                name=f"dispatcher-worker-{ptask.task_id}",
+            )
+            thread.start()
+            logger.info(
+                "Spawned worker for promoted task %s (thread_ts=%s)",
+                ptask.task_id,
+                ptask.thread_ts,
+            )
+
     # ------------------------------------------------------------------
     # Worker thread
     # ------------------------------------------------------------------
@@ -409,12 +430,14 @@ class Dispatcher:
                 except Exception as exc:
                     logger.warning("Memory extraction failed: %s", exc)
 
-            # Step 12: mark completed.
-            self._task_queue.mark_completed(task)
+            # Step 12: mark completed and spawn threads for promoted tasks.
+            promoted = self._task_queue.mark_completed(task)
+            self._spawn_promoted(promoted)
 
         except Exception:
             logger.exception("Unexpected error while processing task %s", task.task_id)
-            self._task_queue.mark_failed(task)
+            promoted = self._task_queue.mark_failed(task)
+            self._spawn_promoted(promoted)
             if not reporter.message_ts:
                 try:
                     self._slack.send_message(
