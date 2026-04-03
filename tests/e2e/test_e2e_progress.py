@@ -145,12 +145,15 @@ class TestProgressDisplay:
         else:
             full_text = final_text
 
-        # The initial ack contains "Processing" or the hourglass spinner.
-        # After completion, it should be replaced — so the final text
-        # should NOT be just the ack.  (It *may* still contain the word
-        # "Processing" inside a longer response, which is fine.)
-        assert len(full_text) > len(":hourglass_flowing_sand: Processing…"), (
-            f"Final message appears to still be the initial ack: {full_text[:300]}"
+        # The initial ack contains ":hourglass_flowing_sand:" or "Processing".
+        # After completion, it should be replaced.
+        # The final message should NOT contain hourglass AND should have
+        # some meaningful content (stats like :clock1: count as completion).
+        assert ":hourglass_flowing_sand:" not in full_text, (
+            f"Final message still contains ack spinner: {full_text[:300]}"
+        )
+        assert full_text.strip(), (
+            "Final message text is empty after completion"
         )
 
     def test_thinking_phase_shown(
