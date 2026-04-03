@@ -1,4 +1,4 @@
-"""Module management CLI commands: install, remove, list, refresh.
+"""Module management CLI commands: install, remove, list, update, refresh.
 
 Each command resolves ``OPENTREE_HOME``, acquires the registry lock
 where needed, and orchestrates the Phase 2 components (Registry,
@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -17,6 +18,7 @@ import typer
 
 from opentree.core.config import load_user_config
 from opentree.core.placeholders import PlaceholderEngine
+from opentree.core.version import compare_versions
 from opentree.generator.claude_md import ClaudeMdGenerator
 from opentree.generator.settings import SettingsGenerator
 from opentree.generator.symlinks import SymlinkManager
@@ -336,6 +338,244 @@ def list_modules() -> None:
         typer.echo(
             f"{name:<20} {entry.version:<10} {entry.module_type:<15} {entry.link_method:<12}"
         )
+
+
+def _bundled_modules_dir() -> Path:
+    """Locate the bundled modules/ directory.
+
+    Reuses the same search logic as init.py.
+    """
+    env = os.environ.get("OPENTREE_BUNDLE_DIR")
+    if env:
+        p = Path(env).resolve()
+        if p.is_dir():
+            return p
+    # Development layout: src/opentree/cli/module.py -> ../../../../modules
+    pkg_root = Path(__file__).resolve().parent.parent.parent.parent
+    candidate = pkg_root / "modules"
+    if candidate.is_dir():
+        return candidate
+    msg = (
+        "Cannot find bundled modules directory. "
+        "Set OPENTREE_BUNDLE_DIR or run from the project root."
+    )
+    raise FileNotFoundError(msg)
+
+
+def _load_bundled_manifest(module_name: str) -> dict | None:
+    """Load a module's bundled manifest. Returns None if not bundled."""
+    try:
+        bundle_dir = _bundled_modules_dir()
+    except FileNotFoundError:
+        return None
+    manifest_path = bundle_dir / module_name / "opentree.json"
+    if not manifest_path.is_file():
+        return None
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def _copy_bundled_module(module_name: str, home: Path) -> None:
+    """Copy a module from bundled source to the installed modules directory."""
+    bundle_dir = _bundled_modules_dir()
+    src = bundle_dir / module_name
+    dst = home / "modules" / module_name
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+
+
+def _update_single_module(
+    module_name: str,
+    home: Path,
+    data,
+    *,
+    symlink_mgr: SymlinkManager,
+    settings_gen: SettingsGenerator,
+    engine: PlaceholderEngine,
+) -> tuple:
+    """Update a single module. Returns (new_data, old_version, new_version).
+
+    Raises typer.Exit on validation failure.
+    """
+    entry = data.get(module_name)
+    old_version = entry.version if entry else "0.0.0"
+
+    # Copy bundled module files to installed location
+    _copy_bundled_module(module_name, home)
+
+    # Load the newly copied manifest
+    manifest = _load_manifest(home, module_name)
+
+    # Validate manifest
+    validator = ManifestValidator()
+    manifest_path = home / "modules" / module_name / "opentree.json"
+    validation = validator.validate_file(manifest_path, module_dir_name=module_name)
+    if not validation.is_valid:
+        typer.echo(f"Error: Invalid manifest for '{module_name}':", err=True)
+        for issue in validation.errors:
+            typer.echo(f"  - {issue.message}", err=True)
+        raise typer.Exit(code=1)
+
+    # Remove old symlinks and permissions
+    if entry:
+        symlink_mgr.remove_module_links(module_name, link_method=entry.link_method)
+        settings_gen.remove_module_permissions(module_name)
+
+    # Create new symlinks
+    rules = manifest.get("loading", {}).get("rules", [])
+    link_results = symlink_mgr.create_module_links_with_resolution(
+        module_name, rules, engine
+    )
+    if any(r.method == "resolved_copy" for r in link_results):
+        link_method = "resolved_copy"
+    elif link_results:
+        link_method = link_results[0].method
+    else:
+        link_method = "symlink"
+
+    # Add new permissions
+    permissions = manifest.get("permissions", {})
+    settings_gen.add_module_permissions(
+        module_name,
+        allow=permissions.get("allow", []),
+        deny=permissions.get("deny", []),
+    )
+
+    # Register with new version
+    depends_on = tuple(manifest.get("depends_on", []))
+    new_data = Registry.register(
+        data,
+        name=module_name,
+        version=manifest["version"],
+        module_type=manifest.get("type", "optional"),
+        source="bundled",
+        link_method=link_method,
+        depends_on=depends_on,
+    )
+
+    return new_data, old_version, manifest["version"]
+
+
+@module_app.command()
+def update(
+    module_name: Annotated[
+        Optional[str],
+        typer.Argument(help="Name of the module to update (omit for --all)"),
+    ] = None,
+    all_modules: Annotated[
+        bool, typer.Option("--all", help="Update all installed modules")
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Preview updates without applying")
+    ] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Allow downgrades")
+    ] = False,
+) -> None:
+    """Update installed modules to their latest bundled versions."""
+    if not module_name and not all_modules:
+        typer.echo(
+            "Error: Provide a module name or use --all.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    home = _resolve_home()
+    reg_path = _registry_path(home)
+
+    try:
+        with Registry.lock(reg_path):
+            data = Registry.load(reg_path)
+
+            if not data.modules:
+                typer.echo("No modules installed. Nothing to update.")
+                return
+
+            # Build update plan
+            targets: list[str] = []
+            if all_modules:
+                targets = [name for name, _entry in data.modules]
+            else:
+                _validate_module_name(module_name)
+                entry = data.get(module_name)
+                if entry is None:
+                    typer.echo(
+                        f"Error: Module '{module_name}' is not installed.",
+                        err=True,
+                    )
+                    raise typer.Exit(code=1)
+                targets = [module_name]
+
+            # Check each target
+            plan: list[tuple[str, str, str, str]] = []  # (name, installed, bundled, action)
+            for name in targets:
+                entry = data.get(name)
+                bundled_manifest = _load_bundled_manifest(name)
+                if bundled_manifest is None:
+                    plan.append((name, entry.version, "—", "skip (not bundled)"))
+                    continue
+                bundled_version = bundled_manifest.get("version", "0.0.0")
+                cmp = compare_versions(entry.version, bundled_version)
+                if cmp == 0:
+                    plan.append((name, entry.version, bundled_version, "up-to-date"))
+                elif cmp == -1:
+                    plan.append((name, entry.version, bundled_version, "upgrade"))
+                else:
+                    if force:
+                        plan.append((name, entry.version, bundled_version, "downgrade (--force)"))
+                    else:
+                        plan.append((name, entry.version, bundled_version, "skip (downgrade, use --force)"))
+
+            # Display plan
+            upgradeable = [p for p in plan if p[3] in ("upgrade", "downgrade (--force)")]
+
+            if dry_run or not upgradeable:
+                header = f"{'Module':<20} {'Installed':<12} {'Bundled':<12} {'Action'}"
+                typer.echo(header)
+                typer.echo("-" * len(header))
+                for name, installed, bundled, action in plan:
+                    typer.echo(f"{name:<20} {installed:<12} {bundled:<12} {action}")
+                if not upgradeable:
+                    typer.echo("\nAll modules are up-to-date.")
+                return
+
+            # Execute updates
+            config = load_user_config(home)
+            engine = PlaceholderEngine(config)
+            symlink_mgr = SymlinkManager(home)
+            settings_gen = SettingsGenerator(home)
+
+            updated: list[tuple[str, str, str]] = []
+            try:
+                for name, installed_v, bundled_v, action in upgradeable:
+                    data, old_v, new_v = _update_single_module(
+                        name, home, data,
+                        symlink_mgr=symlink_mgr,
+                        settings_gen=settings_gen,
+                        engine=engine,
+                    )
+                    updated.append((name, old_v, new_v))
+
+                # Batch write settings + registry + CLAUDE.md
+                settings_gen.write_settings()
+                Registry.save(reg_path, data)
+                _regenerate_claude_md(home, data)
+            except typer.Exit:
+                raise
+            except Exception as exc:
+                typer.echo(f"Error: Update failed: {exc}", err=True)
+                typer.echo("Some modules may be in an inconsistent state.", err=True)
+                typer.echo("Run 'opentree module refresh' to repair.", err=True)
+                raise typer.Exit(code=1)
+
+            # Report
+            for name, old_v, new_v in updated:
+                typer.echo(f"Updated '{name}' (v{old_v} → v{new_v})")
+            typer.echo(f"\n{len(updated)} module(s) updated.")
+
+    except TimeoutError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
 
 
 @module_app.command()
