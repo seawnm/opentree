@@ -51,6 +51,34 @@ E2E_MAX_CONCURRENT = int(os.environ.get("E2E_MAX_CONCURRENT", "5"))
 E2E_QUEUE_TIMEOUT = int(os.environ.get("E2E_QUEUE_TIMEOUT", "300"))  # 5 minutes
 E2E_MAX_TIMEOUT_FAILURES = int(os.environ.get("E2E_MAX_TIMEOUT_FAILURES", "3"))
 
+
+# ---------------------------------------------------------------------------
+# Single Instance Guard (runs once before all E2E tests)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True, scope="session")
+def _enforce_single_bot_instance():
+    """Abort entire E2E suite if Bot Walter has multiple instances.
+
+    Multiple instances cause queue saturation, duplicate replies, and
+    unreliable test results. This guard ensures a clean single-instance
+    environment before any test runs.
+    """
+    result = subprocess.run(
+        ["pgrep", "-f", "opentree start --mode slack"],
+        capture_output=True, text=True, timeout=5,
+    )
+    pids = [p for p in result.stdout.strip().split("\n") if p.strip()]
+    # uv run parent + opentree child = 2 processes per instance
+    # Allow 0 (precheck will catch) or 1-2 (single instance)
+    if len(pids) > 2:
+        pytest.exit(
+            f"E2E ABORT: {len(pids)} bot processes detected (expected ≤2 for "
+            f"single instance). PIDs: {pids}. "
+            "Kill extra instances before running E2E tests.",
+            returncode=1,
+        )
+
 # Session-level shared state (thread-safe)
 _e2e_semaphore = threading.Semaphore(E2E_MAX_CONCURRENT)
 _e2e_timeout_count = 0
