@@ -116,20 +116,23 @@ class TestProgressDisplay:
         self,
         bot_mention: str,
         send_message: Callable[..., dict[str, Any]],
-        read_thread: Callable[..., dict[str, Any]],
+        read_thread_raw: Callable[..., dict[str, Any]],
         grep_log: Callable[..., list[str]],
     ) -> None:
         """發送訊息後應在 timeout 內收到 bot 回覆（初始 ack 會被完成訊息覆蓋）。
 
         由於 ProgressReporter 用 chat.update 覆蓋同一條訊息，thread 中只能看到
         最終版本。我們透過 bot 日誌驗證 ack 曾經被發送。
+
+        Note: uses read_thread_raw (SDK direct) to preserve Block Kit blocks.
+        slack-query-tool strips blocks, leaving only fallback text.
         """
         ts_before = time.strftime("%Y-%m-%dT%H:%M:%S")
         result = send_message(f"{bot_mention} say hello")
         thread_ts = result["message_ts"]
 
-        # Wait for the bot to finish replying
-        final_msg = _get_final_bot_message(read_thread, thread_ts, timeout=120)
+        # Wait for the bot to finish replying (use raw to get blocks)
+        final_msg = _get_final_bot_message(read_thread_raw, thread_ts, timeout=120)
         assert final_msg.get("text"), "Bot returned an empty final message"
 
         # The final message should NOT still be the ack spinner — it should
