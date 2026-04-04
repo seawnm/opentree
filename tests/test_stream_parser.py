@@ -419,3 +419,56 @@ class TestGetResult:
         parser.parse_line(line)
         assert "First part." in parser.state.response_text
         assert "Second part." in parser.state.response_text
+
+
+# ---------------------------------------------------------------------------
+# has_result_event flag tests (Task 4)
+# ---------------------------------------------------------------------------
+
+class TestHasResultEvent:
+    """Tests for ProgressState.has_result_event defensive flag."""
+
+    def test_has_result_event_default_false(self):
+        """has_result_event starts as False before any events are parsed."""
+        state = ProgressState()
+        assert state.has_result_event is False
+
+    def test_has_result_event_set_on_result(self):
+        """has_result_event becomes True after a result event is parsed."""
+        parser = StreamParser()
+        line = _line({"type": "result", "result": "Hello!"})
+        parser.parse_line(line)
+        assert parser.state.has_result_event is True
+
+    def test_has_result_event_set_on_error_result(self):
+        """has_result_event becomes True even when result event is an error."""
+        parser = StreamParser()
+        line = _line({"type": "result", "is_error": True, "result": "something failed"})
+        parser.parse_line(line)
+        assert parser.state.has_result_event is True
+
+    def test_has_result_event_false_without_result(self):
+        """has_result_event stays False when no result event is received."""
+        parser = StreamParser()
+        parser.parse_line(_line({"type": "system", "subtype": "init", "session_id": "s1"}))
+        parser.parse_line(_line({
+            "type": "content_block_start",
+            "content_block": {"type": "tool_use", "name": "Bash"}
+        }))
+        parser.parse_line(_line({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "some text"}]}
+        }))
+        assert parser.state.has_result_event is False
+
+    def test_has_result_event_false_on_empty_input(self):
+        """has_result_event stays False when no lines are parsed at all."""
+        parser = StreamParser()
+        assert parser.state.has_result_event is False
+
+    def test_has_result_event_false_after_non_result_events_only(self):
+        """Parsing only non-result JSON lines does not set has_result_event."""
+        parser = StreamParser()
+        parser.parse_line(_line({"type": "ping"}))
+        parser.parse_line(_line({"type": "content_block_start", "content_block": {"type": "text"}}))
+        assert parser.state.has_result_event is False

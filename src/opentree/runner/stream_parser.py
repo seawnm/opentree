@@ -40,6 +40,7 @@ class ProgressState:
     output_tokens: int = 0
     is_error: bool = False
     error_message: str = ""
+    has_result_event: bool = False
 
 
 class StreamParser:
@@ -168,6 +169,7 @@ class StreamParser:
         return None
 
     def _handle_result(self, data: dict) -> Optional[Phase]:
+        self._state.has_result_event = True
         result_text = data.get("result") or ""
         is_error = bool(data.get("is_error", False))
 

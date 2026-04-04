@@ -165,13 +165,19 @@ class TestBuildCompletionBlocks:
         assert "100" in context_text
         assert "50" in context_text
 
-    def test_build_completion_blocks_no_tokens_no_context(self):
-        """Without tokens, no stats context block is added."""
+    def test_build_completion_blocks_no_tokens_still_shows_elapsed(self):
+        """Without tokens, context block still shows elapsed time."""
         build_completion_blocks = self._import()
         blocks = build_completion_blocks("Response", elapsed=1.0)
 
         context_blocks = [b for b in blocks if b["type"] == "context"]
-        assert len(context_blocks) == 0
+        assert len(context_blocks) == 1
+        context_text = context_blocks[0]["elements"][0]["text"]
+        assert ":clock1:" in context_text
+        assert "1.0s" in context_text
+        # Token indicators must NOT appear
+        assert ":inbox_tray:" not in context_text
+        assert ":outbox_tray:" not in context_text
 
     def test_build_completion_blocks_error(self):
         """Error case: :x: prefix and error message shown."""
@@ -216,13 +222,27 @@ class TestBuildCompletionBlocks:
         assert len(text) <= 3000
 
     def test_build_completion_blocks_elapsed_in_stats(self):
-        """Elapsed time appears in stats context when tokens are provided."""
+        """Elapsed time always appears in stats context block."""
         build_completion_blocks = self._import()
         blocks = build_completion_blocks(
             "ok", elapsed=7.5, input_tokens=10, output_tokens=5
         )
         context_block = next(b for b in blocks if b["type"] == "context")
         assert "7.5s" in context_block["elements"][0]["text"]
+
+    def test_build_completion_blocks_explicit_zero_tokens_elapsed_only(self):
+        """Explicit zero tokens: context block shows elapsed, no token icons."""
+        build_completion_blocks = self._import()
+        blocks = build_completion_blocks(
+            "ok", elapsed=12.3, input_tokens=0, output_tokens=0
+        )
+        context_blocks = [b for b in blocks if b["type"] == "context"]
+        assert len(context_blocks) == 1
+        context_text = context_blocks[0]["elements"][0]["text"]
+        assert ":clock1:" in context_text
+        assert "12.3s" in context_text
+        assert ":inbox_tray:" not in context_text
+        assert ":outbox_tray:" not in context_text
 
     def test_build_completion_blocks_returns_list(self):
         """Returns a list of dicts."""
@@ -344,8 +364,10 @@ class TestBuildCompletionBlocksToolTimeline:
             "Response text", elapsed=5.0, tool_timeline=timeline,
         )
         context_blocks = [b for b in blocks if b["type"] == "context"]
-        assert len(context_blocks) == 1
+        # 2 context blocks: timeline + stats (elapsed always shown)
+        assert len(context_blocks) == 2
         assert "Bash" in context_blocks[0]["elements"][0]["text"]
+        assert ":clock1:" in context_blocks[1]["elements"][0]["text"]
 
     def test_timeline_not_shown_on_error(self):
         """tool_timeline is suppressed when is_error is True."""
@@ -361,13 +383,15 @@ class TestBuildCompletionBlocksToolTimeline:
         assert len(context_blocks) == 0
 
     def test_empty_timeline_no_extra_block(self):
-        """Empty tool_timeline does not add a context block."""
+        """Empty tool_timeline does not add a timeline block, but stats block still present."""
         build_completion_blocks = self._import()
         blocks = build_completion_blocks(
             "Response", elapsed=3.0, tool_timeline="",
         )
         context_blocks = [b for b in blocks if b["type"] == "context"]
-        assert len(context_blocks) == 0
+        # Only stats context (elapsed), no timeline context
+        assert len(context_blocks) == 1
+        assert ":clock1:" in context_blocks[0]["elements"][0]["text"]
 
     def test_timeline_before_stats_context(self):
         """Timeline context appears before stats context when both present."""

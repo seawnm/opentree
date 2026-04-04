@@ -246,6 +246,20 @@ class ClaudeProcess:
             if stderr_output:
                 logger.warning("Claude stderr: %s", stderr_output.strip())
 
+        pid = self._process.pid if self._process is not None else None
+        if not self._parser.state.has_result_event:
+            logger.warning(
+                "No result event received from Claude CLI stream "
+                "(pid=%s, exit_code=%s, timed_out=%s)",
+                pid, exit_code, self._timed_out,
+            )
+        elif self._parser.state.input_tokens == 0 and self._parser.state.output_tokens == 0:
+            logger.warning(
+                "Result event received but token counts are both zero "
+                "(pid=%s, exit_code=%s)",
+                pid, exit_code,
+            )
+
         result_dict = self._parser.get_result()
 
         return ClaudeResult(

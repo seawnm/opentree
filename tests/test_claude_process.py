@@ -906,3 +906,125 @@ class TestExtraEnv:
 
         from opentree.runner.claude_process import ClaudeResult
         assert isinstance(result, ClaudeResult)
+
+
+# ---------------------------------------------------------------------------
+# Warning log tests (Task 3)
+# ---------------------------------------------------------------------------
+
+class TestWarningLogs:
+    """Tests for defensive warning logs on missing/zero result events."""
+
+    def _make_mock_proc(self, lines: list[str], returncode: int = 0, pid: int = 999) -> MagicMock:
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter(lines)
+        mock_proc.returncode = returncode
+        mock_proc.pid = pid
+        mock_proc.poll.return_value = returncode
+        mock_proc.wait.return_value = returncode
+        return mock_proc
+
+    def test_no_result_event_logs_warning(self):
+        """When stream ends without a result event, a warning is logged."""
+        from opentree.runner.claude_process import ClaudeProcess
+
+        lines = [
+            _stream_line(type="system", subtype="init", session_id="s1"),
+            # Deliberately no result event — simulates SIGTERM / crash
+        ]
+        mock_proc = self._make_mock_proc(lines, returncode=-15, pid=801)
+
+        with patch("subprocess.Popen", return_value=mock_proc):
+            cp = ClaudeProcess(config=_make_config(), system_prompt="s", cwd="/c")
+            with patch("opentree.runner.claude_process.logger") as mock_logger:
+                cp.run()
+
+        # At least one warning call must mention the missing result event
+        warning_calls = mock_logger.warning.call_args_list
+        messages = [str(call) for call in warning_calls]
+        assert any("No result event" in m or "result event" in m.lower() for m in messages), (
+            f"Expected warning about missing result event, got: {messages}"
+        )
+
+    def test_result_event_with_zero_tokens_logs_warning(self):
+        """When result event arrives but both token counts are 0, a warning is logged."""
+        from opentree.runner.claude_process import ClaudeProcess
+
+        lines = [
+            _stream_line(type="system", subtype="init", session_id="s1"),
+            _stream_line(
+                type="result",
+                result="ok",
+                is_error=False,
+                session_id="s1",
+                usage={"input_tokens": 0, "output_tokens": 0},
+            ),
+        ]
+        mock_proc = self._make_mock_proc(lines, returncode=0, pid=802)
+
+        with patch("subprocess.Popen", return_value=mock_proc):
+            cp = ClaudeProcess(config=_make_config(), system_prompt="s", cwd="/c")
+            with patch("opentree.runner.claude_process.logger") as mock_logger:
+                cp.run()
+
+        warning_calls = mock_logger.warning.call_args_list
+        messages = [str(call) for call in warning_calls]
+        assert any("zero" in m.lower() or "token" in m.lower() for m in messages), (
+            f"Expected warning about zero token counts, got: {messages}"
+        )
+
+    def test_normal_tokens_no_token_warning(self):
+        """When tokens are non-zero after a result event, no token warning is logged."""
+        from opentree.runner.claude_process import ClaudeProcess
+
+        lines = [
+            _stream_line(type="system", subtype="init", session_id="s1"),
+            _stream_line(
+                type="result",
+                result="ok",
+                is_error=False,
+                session_id="s1",
+                usage={"input_tokens": 100, "output_tokens": 50},
+            ),
+        ]
+        mock_proc = self._make_mock_proc(lines, returncode=0, pid=803)
+
+        with patch("subprocess.Popen", return_value=mock_proc):
+            cp = ClaudeProcess(config=_make_config(), system_prompt="s", cwd="/c")
+            with patch("opentree.runner.claude_process.logger") as mock_logger:
+                cp.run()
+
+        warning_calls = mock_logger.warning.call_args_list
+        messages = [str(call) for call in warning_calls]
+        # No warning about missing result or zero tokens should appear
+        assert not any("No result event" in m for m in messages), (
+            f"Unexpected 'No result event' warning: {messages}"
+        )
+        assert not any("zero" in m.lower() and "token" in m.lower() for m in messages), (
+            f"Unexpected zero-token warning: {messages}"
+        )
+
+    def test_no_result_event_warning_includes_pid_and_exit_code(self):
+        """The no-result-event warning log includes pid and exit_code context."""
+        from opentree.runner.claude_process import ClaudeProcess
+
+        lines = [
+            # No result event at all
+        ]
+        mock_proc = self._make_mock_proc(lines, returncode=1, pid=9001)
+
+        with patch("subprocess.Popen", return_value=mock_proc):
+            cp = ClaudeProcess(config=_make_config(), system_prompt="s", cwd="/c")
+            with patch("opentree.runner.claude_process.logger") as mock_logger:
+                cp.run()
+
+        warning_calls = mock_logger.warning.call_args_list
+        # Find the "no result event" warning and check it contains pid/exit_code args
+        no_result_calls = [
+            c for c in warning_calls
+            if "No result event" in str(c) or "result event" in str(c).lower()
+        ]
+        assert no_result_calls, "Expected at least one no-result-event warning call"
+        # The call args should include pid=9001 somewhere
+        call_repr = str(no_result_calls[0])
+        assert "9001" in call_repr, f"Expected pid 9001 in warning args: {call_repr}"

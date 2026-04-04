@@ -72,14 +72,6 @@ def _poll_sessions_json(
 class TestSessionManagement:
     """B6: thread context, session independence, persistence."""
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason=(
-            "Multi-turn context recall depends on Claude CLI --resume "
-            "and AI non-deterministic behavior. Session persistence "
-            "timing on WSL2 may also cause flakiness."
-        ),
-    )
     def test_same_thread_maintains_context(
         self,
         bot_mention: str,

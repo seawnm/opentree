@@ -89,17 +89,18 @@ def build_completion_blocks(
 ) -> list[dict]:
     """Build Block Kit blocks for the final response.
 
-    - Success: response text + token stats.  Long responses (> 3000 chars)
-      are split into multiple section blocks.  If the total text exceeds
-      12 000 chars a "(truncated)" indicator is appended.
+    - Success: response text + stats context.  Elapsed time is always shown;
+      token counts are appended when available (>0).  Long responses
+      (> 3000 chars) are split into multiple section blocks.  If the total
+      text exceeds 12 000 chars a "(truncated)" indicator is appended.
     - Error: error message with :x: prefix (single section, truncated at 3000).
     - Empty response: warning indicator.
 
     Args:
         response_text: The final response text from Claude.
-        elapsed: Elapsed wall-clock seconds.
-        input_tokens: Input token count (0 = not reported).
-        output_tokens: Output token count (0 = not reported).
+        elapsed: Elapsed wall-clock seconds (always shown on success).
+        input_tokens: Input token count (0 = not reported, omitted from display).
+        output_tokens: Output token count (0 = not reported, omitted from display).
         is_error: Whether the result is an error.
         error_message: Error description (used when is_error is True).
         tool_timeline: Optional tool usage timeline string to display.
@@ -131,8 +132,8 @@ def build_completion_blocks(
             }
         )
 
-    # Stats context (only on success with token counts)
-    if not is_error and (input_tokens or output_tokens):
+    # Stats context (always on success; tokens shown when available)
+    if not is_error:
         stats = f":clock1: {elapsed:.1f}s"
         if input_tokens:
             stats += f" | :inbox_tray: {input_tokens:,}"

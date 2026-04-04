@@ -4,11 +4,17 @@
 
 ## [Unreleased]
 
+### Added
+- **`has_result_event` 旗標** — StreamParser 的 ProgressState 新增旗標，區分「token 真的是 0」和「沒收到 result event」
+- **Token 缺失 warning log** — Claude CLI stream 未回報 result event 或 token 都為 0 時，記錄 warning（含 pid、exit_code、timed_out 狀態）
+
 ### Fixed
 - 移除 init.py hint 訊息中已不存在的 `--admin-channel` 參數引用
 - 移除 guardrail manifest 中 `admin_channel` placeholder 殘留宣告
 - run.sh singleton lock file 改到 `/tmp/`（修復 WSL2 DrvFs 上 flock 不生效的問題）
 - Registry.lock file 同步改到 `/tmp/`（md5 hash 隔離不同 instance）
+- **Elapsed time 與 token stats 解耦** — 完成訊息的耗時（`:clock1:`）不再依賴 token 計數才顯示。Claude CLI 未回報 usage 時，耗時仍正常顯示（progress.py line 135 條件修正）
+- **3 個 xfail 升級為 hard pass** — test_long_input_handled、test_multi_turn_context、test_same_thread_maintains_context 在單 instance 環境穩定通過
 
 ## [0.4.0] - 2026-04-04
 

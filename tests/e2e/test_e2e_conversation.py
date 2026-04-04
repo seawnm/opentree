@@ -17,14 +17,6 @@ pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 class TestMultiTurnContext:
     """A7: Bot should retain conversation context within a thread."""
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason=(
-            "Multi-turn context recall depends on Claude CLI --resume, "
-            "thread context rebuilding, and AI non-deterministic behavior. "
-            "The polling loop also lacks hourglass filtering."
-        ),
-    )
     def test_multi_turn_context(
         self,
         bot_mention: str,

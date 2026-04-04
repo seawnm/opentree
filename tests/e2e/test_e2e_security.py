@@ -226,13 +226,6 @@ class TestInputFiltering:
             f"{exec_evidence[:3]}"
         )
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason=(
-            "Long input (~5400 chars) may cause bot timeout under load. "
-            "The hourglass filter also makes completion detection harder."
-        ),
-    )
     def test_long_input_handled(
         self,
         bot_mention: str,
