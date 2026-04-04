@@ -32,7 +32,7 @@ def opentree_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _init(extra_args: list[str] | None = None) -> None:
     """Run init with standard flags; assert success."""
-    args = ["init", "--non-interactive", "--admin-channel", "C123"]
+    args = ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"]
     if extra_args:
         args.extend(extra_args)
     result = runner.invoke(app, args)
@@ -232,4 +232,4 @@ class TestPromptShow:
         result = runner.invoke(app, ["prompt", "show"])
         assert result.exit_code == 0, result.output
         # Should contain the bot name and path info
-        assert "OpenTree" in result.output
+        assert "TestBot" in result.output

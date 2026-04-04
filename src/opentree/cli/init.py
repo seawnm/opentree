@@ -207,7 +207,35 @@ def _restore_state(opentree_home: Path, backup_dir: Path) -> None:
 # ------------------------------------------------------------------
 
 
+def _parse_admin_users(raw: str) -> list[str]:
+    """Parse comma-separated admin Slack User IDs.
+
+    Validates that each ID starts with 'U' (Slack convention).
+    """
+    users = [u.strip() for u in raw.split(",") if u.strip()]
+    if not users:
+        raise typer.BadParameter("At least one admin user ID is required.")
+    for uid in users:
+        if not uid.startswith("U"):
+            raise typer.BadParameter(
+                f"Invalid Slack User ID '{uid}'. "
+                "Slack User IDs start with 'U' (e.g. U0AJRPQ55PH)."
+            )
+    return users
+
+
 def init_command(
+    bot_name: Annotated[
+        str,
+        typer.Option("--bot-name", help="Bot display name (required)"),
+    ] = ...,
+    admin_users: Annotated[
+        str,
+        typer.Option(
+            "--admin-users",
+            help="Comma-separated admin Slack User IDs (required, e.g. U123,U456)",
+        ),
+    ] = ...,
     home: Annotated[
         Optional[str],
         typer.Option("--home", help="Path to OPENTREE_HOME"),
@@ -220,17 +248,9 @@ def init_command(
         bool,
         typer.Option("--non-interactive", help="Skip interactive prompts"),
     ] = False,
-    bot_name: Annotated[
-        Optional[str],
-        typer.Option("--bot-name", help="Bot display name"),
-    ] = None,
     team_name: Annotated[
         Optional[str],
         typer.Option("--team-name", help="Team name"),
-    ] = None,
-    admin_channel: Annotated[
-        Optional[str],
-        typer.Option("--admin-channel", help="Admin Slack channel ID"),
     ] = None,
 ) -> None:
     """Initialize an OpenTree home directory with bundled modules."""
@@ -257,13 +277,30 @@ def init_command(
 
     # 2. Write user.json
     user_config_data = {
-        "bot_name": bot_name or "OpenTree",
+        "bot_name": bot_name,
         "team_name": team_name or "",
-        "admin_channel": admin_channel or "",
+        "admin_channel": "",  # deprecated: kept for backward compat
         "admin_description": "",
     }
     (opentree_home / "config" / "user.json").write_text(
         json.dumps(user_config_data, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    # 2b. Write config/runner.json (admin_users)
+    parsed_admin = _parse_admin_users(admin_users)
+    runner_json_path = opentree_home / "config" / "runner.json"
+    runner_data: dict = {}
+    if runner_json_path.exists():
+        try:
+            runner_data = json.loads(
+                runner_json_path.read_text(encoding="utf-8")
+            )
+        except (json.JSONDecodeError, ValueError):
+            runner_data = {}
+    runner_data["admin_users"] = parsed_admin
+    runner_json_path.write_text(
+        json.dumps(runner_data, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
 
@@ -425,9 +462,11 @@ def init_command(
     # 7. Success summary
     installed = ", ".join(_PRE_INSTALLED)
     typer.echo(f"Initialized OpenTree at {opentree_home}")
-    typer.echo(f"Pre-installed modules: {installed}")
-    typer.echo(f"Workspace: {opentree_home / 'workspace'}")
-    typer.echo("Run 'opentree start' to launch Claude CLI.")
+    typer.echo(f"  Bot name: {bot_name}")
+    typer.echo(f"  Admin users: {', '.join(parsed_admin)}")
+    typer.echo(f"  Pre-installed modules: {installed}")
+    typer.echo(f"  Workspace: {opentree_home / 'workspace'}")
+    typer.echo("Run 'opentree start' to launch.")
 
 
 # ------------------------------------------------------------------

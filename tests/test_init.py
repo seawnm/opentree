@@ -50,7 +50,7 @@ class TestInitDirectoryStructure:
     ) -> None:
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 0, result.output
 
@@ -67,7 +67,7 @@ class TestInitDirectoryStructure:
                 "--non-interactive",
                 "--bot-name", "MyBot",
                 "--team-name", "MyTeam",
-                "--admin-channel", "C999",
+                "--admin-users", "U0TEST999",
             ],
         )
         assert result.exit_code == 0, result.output
@@ -77,19 +77,19 @@ class TestInitDirectoryStructure:
         )
         assert user_json["bot_name"] == "MyBot"
         assert user_json["team_name"] == "MyTeam"
-        assert user_json["admin_channel"] == "C999"
+        assert user_json["admin_channel"] == ""  # deprecated, always empty
 
     def test_init_non_interactive_defaults(self, opentree_home: Path) -> None:
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 0, result.output
 
         user_json = json.loads(
             (opentree_home / "config" / "user.json").read_text(encoding="utf-8")
         )
-        assert user_json["bot_name"] == "OpenTree"
+        assert user_json["bot_name"] == "TestBot"
 
 
 # ------------------------------------------------------------------
@@ -103,7 +103,7 @@ class TestInitModules:
     def test_init_copies_bundled_modules(self, opentree_home: Path) -> None:
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 0, result.output
 
@@ -117,7 +117,7 @@ class TestInitModules:
     def test_init_installs_7_preinstalled(self, opentree_home: Path) -> None:
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 0, result.output
 
@@ -136,7 +136,7 @@ class TestInitModules:
     def test_init_creates_21_rules(self, opentree_home: Path) -> None:
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 0, result.output
 
@@ -147,7 +147,7 @@ class TestInitModules:
     def test_init_generates_claude_md(self, opentree_home: Path) -> None:
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 0, result.output
 
@@ -171,14 +171,14 @@ class TestInitReinit:
         # First init
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 0, result.output
 
         # Second init without --force
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 1
         assert "Already initialized" in result.output
@@ -187,14 +187,14 @@ class TestInitReinit:
         # First init
         runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         # Second init with --force
         result = runner.invoke(
             app,
             [
                 "init", "--non-interactive", "--force",
-                "--admin-channel", "C123", "--bot-name", "NewBot",
+                "--admin-users", "U0TEST123", "--bot-name", "NewBot",
             ],
         )
         assert result.exit_code == 0, result.output
@@ -213,27 +213,39 @@ class TestInitReinit:
 class TestInitPreflight:
     """Pre-flight placeholder validation (Option C: fail ALL)."""
 
-    def test_init_preflight_fails_without_admin_channel(
+    def test_init_fails_without_required_params(
         self, opentree_home: Path
     ) -> None:
-        """guardrail requires admin_channel; omitting it fails pre-flight."""
+        """init requires --bot-name and --admin-users."""
         result = runner.invoke(
             app,
             ["init", "--non-interactive"],
         )
-        assert result.exit_code == 1
-        assert "guardrail" in result.output
-        assert "admin_channel" in result.output
+        assert result.exit_code != 0
 
-    def test_init_with_admin_channel_succeeds(
+    def test_init_fails_with_invalid_admin_user_id(
         self, opentree_home: Path
     ) -> None:
+        """admin user IDs must start with 'U'."""
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "X_INVALID"],
+        )
+        assert result.exit_code != 0
+
+    def test_init_creates_runner_json_with_admin_users(
+        self, opentree_home: Path
+    ) -> None:
+        """init should create runner.json with admin_users."""
+        result = runner.invoke(
+            app,
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123,U0TEST456"],
         )
         assert result.exit_code == 0, result.output
-        assert "Initialized" in result.output
+        runner_json = json.loads(
+            (opentree_home / "config" / "runner.json").read_text(encoding="utf-8")
+        )
+        assert runner_json["admin_users"] == ["U0TEST123", "U0TEST456"]
 
 
 # ------------------------------------------------------------------
@@ -249,7 +261,7 @@ class TestStart:
         # Init first
         runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
 
         result = runner.invoke(app, ["start", "--dry-run"])
@@ -272,7 +284,7 @@ class TestStart:
         """--isolate includes CLAUDE_CONFIG_DIR in output."""
         runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         result = runner.invoke(app, ["start", "--dry-run", "--isolate"])
         assert result.exit_code == 0, result.output
@@ -294,7 +306,7 @@ class TestInitForceWarning:
         # First init
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 0, result.output
 
@@ -309,7 +321,7 @@ class TestInitForceWarning:
                 app,
                 [
                     "init", "--non-interactive", "--force",
-                    "--admin-channel", "C123",
+                    "--bot-name", "TestBot", "--admin-users", "U0TEST123",
                 ],
             )
             assert result.exit_code == 0, result.output
@@ -332,7 +344,7 @@ class TestInitForceWarning:
                 app,
                 [
                     "init", "--non-interactive", "--force",
-                    "--admin-channel", "C123",
+                    "--bot-name", "TestBot", "--admin-users", "U0TEST123",
                 ],
             )
             assert result.exit_code == 0, result.output
@@ -351,7 +363,7 @@ class TestInitForceWarning:
         # First init
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 0, result.output
 
@@ -362,7 +374,7 @@ class TestInitForceWarning:
                 app,
                 [
                     "init", "--force",
-                    "--admin-channel", "C123",
+                    "--bot-name", "TestBot", "--admin-users", "U0TEST123",
                 ],
                 input="y\n",
             )
@@ -375,7 +387,7 @@ class TestInitForceWarning:
         # First init
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 0, result.output
 
@@ -385,7 +397,7 @@ class TestInitForceWarning:
                 app,
                 [
                     "init", "--force",
-                    "--admin-channel", "C123",
+                    "--bot-name", "TestBot", "--admin-users", "U0TEST123",
                 ],
                 input="n\n",
             )
@@ -408,7 +420,7 @@ class TestInitTransactionalInstall:
         # First init succeeds
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 0, result.output
 
@@ -434,7 +446,7 @@ class TestInitTransactionalInstall:
                 app,
                 [
                     "init", "--non-interactive", "--force",
-                    "--admin-channel", "C123",
+                    "--bot-name", "TestBot", "--admin-users", "U0TEST123",
                 ],
             )
             # Should fail
@@ -453,7 +465,7 @@ class TestInitTransactionalInstall:
         """After successful init, no backup directories should remain."""
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 0, result.output
 
@@ -468,7 +480,7 @@ class TestInitTransactionalInstall:
         # First init succeeds
         result = runner.invoke(
             app,
-            ["init", "--non-interactive", "--admin-channel", "C123"],
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
         )
         assert result.exit_code == 0, result.output
 
@@ -487,7 +499,7 @@ class TestInitTransactionalInstall:
                 app,
                 [
                     "init", "--non-interactive", "--force",
-                    "--admin-channel", "C123",
+                    "--bot-name", "TestBot", "--admin-users", "U0TEST123",
                 ],
             )
             assert result.exit_code != 0
