@@ -6,7 +6,7 @@
 
 ## 近期
 
-- [ ] **flock DrvFs 修復** — WSL2 `/mnt/e/` 上 flock 不生效，需改用 `/tmp/` 路徑或 PID file lock（來自 thread 1775069650）
+- [x] **flock DrvFs 修復** — WSL2 `/mnt/e/` 上 flock 不生效，需改用 `/tmp/` 路徑或 PID file lock（來自 thread 1775069650）— ✅ 2026-04-04
 - [x] **remaining-tasks.md 更新** — module update、LOW issues 已完成但文件未標記 done（來自 thread 1775069650）— ✅ 2026-04-04
 - [ ] **v0.3.1 發布** — post-v0.3.0 已有 12+ commits（含 P0 TaskQueue bug fix），應發版（來自 thread 1775069650）
 - [ ] **完整 E2E 全跑一次** — 單 instance + bug fix 後需完成 75 tests 全跑驗證（來自 thread 1775069650）

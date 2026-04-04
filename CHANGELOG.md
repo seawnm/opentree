@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- 移除 init.py hint 訊息中已不存在的 `--admin-channel` 參數引用
+- 移除 guardrail manifest 中 `admin_channel` placeholder 殘留宣告
+- run.sh singleton lock file 改到 `/tmp/`（修復 WSL2 DrvFs 上 flock 不生效的問題）
+- Registry.lock file 同步改到 `/tmp/`（md5 hash 隔離不同 instance）
+
 ## [0.4.0] - 2026-04-04
 
 ### Added
