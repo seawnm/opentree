@@ -19,7 +19,7 @@
   },
   "permissions": {
     "allow": [
-      "Bash(uv run --directory $OPENTREE_HOME/bin:*requirement*)"
+      "Bash(uv run --directory *:*requirement_tool*)"
     ],
     "deny": []
   },

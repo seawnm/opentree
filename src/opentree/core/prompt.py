@@ -125,6 +125,8 @@ class PromptContext:
     team_name: str = ""
     memory_path: str = ""
     is_new_user: bool = False
+    thread_participants: tuple[str, ...] = ()
+    opentree_home: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a plain dict for passing to module hooks."""
@@ -138,6 +140,8 @@ class PromptContext:
             "team_name": self.team_name,
             "memory_path": self.memory_path,
             "is_new_user": self.is_new_user,
+            "thread_participants": list(self.thread_participants),
+            "opentree_home": self.opentree_home,
         }
 
 

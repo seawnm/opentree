@@ -21,7 +21,7 @@ set -euo pipefail
 # ---- Configuration ----
 
 OPENTREE_HOME="{{opentree_home}}"
-BOT_CMD=(opentree start --mode slack --home "$OPENTREE_HOME")
+BOT_CMD=({{opentree_cmd}} start --mode slack --home "$OPENTREE_HOME")
 DATA_DIR="$OPENTREE_HOME/data"
 PID_FILE="$DATA_DIR/bot.pid"
 HEARTBEAT_FILE="$DATA_DIR/bot.heartbeat"

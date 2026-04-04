@@ -1577,3 +1577,37 @@ class TestCircuitBreakerIntegration:
 
         import time; time.sleep(0.3)
         assert len(process_called) == 0
+
+
+# ---------------------------------------------------------------------------
+# _check_new_user
+# ---------------------------------------------------------------------------
+
+class TestCheckNewUser:
+    """Tests for Dispatcher._check_new_user."""
+
+    def test_empty_path_is_new(self):
+        from opentree.runner.dispatcher import Dispatcher
+        assert Dispatcher._check_new_user("") is True
+
+    def test_nonexistent_file_is_new(self, tmp_path):
+        from opentree.runner.dispatcher import Dispatcher
+        assert Dispatcher._check_new_user(str(tmp_path / "missing.md")) is True
+
+    def test_empty_file_is_new(self, tmp_path):
+        from opentree.runner.dispatcher import Dispatcher
+        f = tmp_path / "memory.md"
+        f.write_text("", encoding="utf-8")
+        assert Dispatcher._check_new_user(str(f)) is True
+
+    def test_template_only_is_new(self, tmp_path):
+        from opentree.runner.dispatcher import Dispatcher
+        f = tmp_path / "memory.md"
+        f.write_text("# Walter 的記憶\n\n## Pinned\n\n## Core\n", encoding="utf-8")
+        assert Dispatcher._check_new_user(str(f)) is True
+
+    def test_file_with_content_is_not_new(self, tmp_path):
+        from opentree.runner.dispatcher import Dispatcher
+        f = tmp_path / "memory.md"
+        f.write_text("# Walter 的記憶\n\n## Pinned\n\n- 喜歡喝咖啡\n", encoding="utf-8")
+        assert Dispatcher._check_new_user(str(f)) is False

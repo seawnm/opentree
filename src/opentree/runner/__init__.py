@@ -1,3 +1,3 @@
 """OpenTree Bot Runner — Slack bot runtime for OpenTree."""
 
-__version__ = "0.1.0"
+from opentree import __version__  # re-export from main package

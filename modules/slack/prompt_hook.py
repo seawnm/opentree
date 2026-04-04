@@ -22,4 +22,13 @@ def prompt_hook(context: dict) -> list[str]:
         parts.append(f"目前 Workspace：{team}")
     if context.get("workspace"):
         parts.append(f"目前頻道工作區：{context['workspace']}")
+
+    # Thread participants reminder
+    participants = context.get("thread_participants", [])
+    user_display = context.get("user_display_name", "") or context.get("user_name", "")
+    if participants:
+        others = [p for p in participants if p != user_display]
+        if others:
+            parts.append(f"⚠️ 此 thread 有其他參與者：{', '.join(others)}（回覆內容他們也看得到，注意資訊安全）")
+
     return parts

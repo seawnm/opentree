@@ -19,8 +19,8 @@
   },
   "permissions": {
     "allow": [
-      "Bash(uv run --directory $OPENTREE_HOME/bin:*upload*)",
-      "Bash(uv run --directory $OPENTREE_HOME/bin:*slack_query*)"
+      "Bash(uv run --directory *:*upload_tool*)",
+      "Bash(uv run --directory *:*slack_query_tool*)"
     ],
     "deny": [
       "mcp__claude_ai_Slack__slack_send_message",

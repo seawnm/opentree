@@ -501,6 +501,26 @@ class Dispatcher:
     # PromptContext builder
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _check_new_user(memory_path: str) -> bool:
+        """Check if user is new (no memory file or empty/template-only content)."""
+        if not memory_path:
+            return True
+        path = Path(memory_path)
+        if not path.exists():
+            return True
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+            if not content:
+                return True
+            # Template-only: just has section headers like "# xxx 的記憶" or "## Pinned"
+            lines = [line for line in content.splitlines() if line.strip() and not line.strip().startswith("#")]
+            if not lines:
+                return True
+        except OSError:
+            return True
+        return False
+
     def _build_prompt_context(self, task: Task, user_name: str = "") -> PromptContext:
         """Build a per-request :class:`~opentree.core.prompt.PromptContext`.
 
@@ -529,6 +549,8 @@ class Dispatcher:
             workspace="default",
             team_name=self._user_config.team_name,
             memory_path=memory_path,
+            is_new_user=self._check_new_user(memory_path),
+            opentree_home=str(self._home),
         )
 
     # ------------------------------------------------------------------

@@ -95,6 +95,8 @@ class TestPromptContext:
         assert ctx.team_name == ""
         assert ctx.memory_path == ""
         assert ctx.is_new_user is False
+        assert ctx.thread_participants == ()
+        assert ctx.opentree_home == ""
 
     def test_prompt_context_to_dict(self) -> None:
         ctx = PromptContext(user_id="U999", user_name="alice", is_new_user=True)
@@ -114,8 +116,26 @@ class TestPromptContext:
             "team_name",
             "memory_path",
             "is_new_user",
+            "thread_participants",
+            "opentree_home",
         }
         assert set(d.keys()) == expected_keys
+
+    def test_prompt_context_new_fields_defaults(self) -> None:
+        """New fields have safe defaults."""
+        ctx = PromptContext()
+        assert ctx.thread_participants == ()
+        assert ctx.opentree_home == ""
+
+    def test_prompt_context_new_fields_in_dict(self) -> None:
+        """New fields appear in to_dict output."""
+        ctx = PromptContext(
+            thread_participants=("Alice", "Bob"),
+            opentree_home="/home/test/.opentree",
+        )
+        d = ctx.to_dict()
+        assert d["thread_participants"] == ["Alice", "Bob"]
+        assert d["opentree_home"] == "/home/test/.opentree"
 
 
 # ------------------------------------------------------------------ #

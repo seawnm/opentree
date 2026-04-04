@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -507,3 +508,117 @@ class TestInitTransactionalInstall:
         # Backup dir should be cleaned up even after failure
         backup_dir = opentree_home / "_install_backup"
         assert not backup_dir.exists()
+
+
+# ------------------------------------------------------------------
+# init: command detection for run.sh
+# ------------------------------------------------------------------
+
+
+class TestInitCommandDetection:
+    """opentree init detects source checkout vs installed package and adjusts BOT_CMD."""
+
+    def test_init_uv_run_in_source_checkout(
+        self, opentree_home: Path
+    ) -> None:
+        """In a source checkout (pyproject.toml exists), run.sh uses 'uv run --directory'."""
+        # Tests always run from source checkout, so no mocking needed
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+
+        run_sh = (opentree_home / "bin" / "run.sh").read_text(encoding="utf-8")
+        bot_cmd_line = [l for l in run_sh.splitlines() if "BOT_CMD=" in l][0]
+        assert "uv run --directory" in bot_cmd_line
+        assert "opentree start" in bot_cmd_line
+
+    def test_init_bare_opentree_when_installed(
+        self, opentree_home: Path
+    ) -> None:
+        """When not a source checkout (no pyproject.toml), run.sh uses bare 'opentree'."""
+        with patch(
+            "opentree.cli.init._resolve_opentree_cmd",
+            return_value=("opentree", None),
+        ):
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+
+        run_sh = (opentree_home / "bin" / "run.sh").read_text(encoding="utf-8")
+        bot_cmd_line = [l for l in run_sh.splitlines() if "BOT_CMD=" in l][0]
+        assert bot_cmd_line.strip().startswith("BOT_CMD=(opentree start")
+        assert "uv run" not in bot_cmd_line
+
+    def test_init_uv_run_includes_quoted_project_root(
+        self, opentree_home: Path
+    ) -> None:
+        """The uv run --directory path is single-quoted and points to project root."""
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+
+        run_sh = (opentree_home / "bin" / "run.sh").read_text(encoding="utf-8")
+        bot_cmd_line = [l for l in run_sh.splitlines() if "BOT_CMD=" in l][0]
+        # Path should be single-quoted for space safety
+        match = re.search(r"--directory\s+'([^']+)'", bot_cmd_line)
+        assert match is not None, f"Expected single-quoted path in: {bot_cmd_line}"
+        project_dir = Path(match.group(1))
+        assert (project_dir / "pyproject.toml").exists()
+
+    def test_init_uv_sync_called_when_source_checkout(
+        self, opentree_home: Path
+    ) -> None:
+        """In source checkout mode, init calls 'uv sync --extra slack'."""
+        project_root = Path(__file__).resolve().parent.parent
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+
+        # Verify exact uv sync call
+        assert any(
+            call.args[0][:4] == ["uv", "sync", "--extra", "slack"]
+            for call in mock_run.call_args_list
+            if call.args
+        ), f"Expected 'uv sync --extra slack' call, got: {mock_run.call_args_list}"
+
+    def test_init_uv_sync_failure_warns_but_continues(
+        self, opentree_home: Path
+    ) -> None:
+        """If uv sync fails, init should warn but not abort."""
+        with patch("opentree.cli.init.subprocess.run", side_effect=Exception("network error")), \
+             patch("opentree.cli.init.logger") as mock_logger:
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+        assert mock_logger.warning.called
+
+    def test_init_no_uv_sync_when_installed(
+        self, opentree_home: Path
+    ) -> None:
+        """When not a source checkout, uv sync should NOT be called."""
+        with patch(
+            "opentree.cli.init._resolve_opentree_cmd",
+            return_value=("opentree", None),
+        ), patch("opentree.cli.init.subprocess.run") as mock_run:
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+        assert not mock_run.called, "uv sync should not be called in installed mode"

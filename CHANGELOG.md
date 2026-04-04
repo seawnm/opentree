@@ -7,14 +7,27 @@
 ### Added
 - **`has_result_event` 旗標** — StreamParser 的 ProgressState 新增旗標，區分「token 真的是 0」和「沒收到 result event」
 - **Token 缺失 warning log** — Claude CLI stream 未回報 result event 或 token 都為 0 時，記錄 warning（含 pid、exit_code、timed_out 狀態）
+- **PromptContext 擴充** — 新增 `thread_participants`（Thread 參與者列表）和 `opentree_home`（根目錄路徑）欄位，供模組 hook 動態注入
+- **Dispatcher `_check_new_user`** — 新使用者偵測邏輯（memory.md 不存在/空/僅模板時回傳 True），驅動 FTUE 導覽
+- **slack hook: Thread 參與者提醒** — 當 thread 有其他參與者時注入安全提醒，自動排除當前使用者
+- **requirement hook: 訪談上下文偵測** — 掃描 `data/requirements/*/interviews/*.yaml`，匹配 thread_ts 時注入需求訪談上下文（受訪者、階段、題數、觀察筆記）。pyyaml 不可用時 graceful degradation
+- **版本號 single source of truth** — `__version__` 改為 `importlib.metadata.version("opentree")` 動態讀取，fallback 硬編碼；`runner.__version__` 改為 re-export 主套件版本。新增版本一致性測試
+- **README 完整覆寫** — 從 21 行佔位符更新為完整英文文件，涵蓋功能特色、安裝、Quick Start、模組系統、架構、開發指引
+
+### Changed
+- **Modules manifest permissions 路徑統一** — scheduler、slack、audit-logger、requirement 的 `permissions.allow` 從 `$OPENTREE_HOME/bin` 改為 `Bash(uv run --directory *:*<tool>*)` 格式，對齊 rules 中的實際 CLI 指令
+- **Modules manifest placeholder 補齊** — personality 補 `admin_description`、guardrail 補 `bot_name`、memory 補 `bot_name`
 
 ### Fixed
+- **run.sh command detection** — `opentree init` 自動偵測 source checkout（pyproject.toml 存在）並使用 `uv run --directory` 取代裸 `opentree` 指令。路徑使用單引號避免空格問題。非 source checkout 時保持裸 `opentree`
+- **Slack 依賴自動安裝** — source checkout 模式下 `opentree init` 自動執行 `uv sync --extra slack`，失敗時警告但不中斷（timeout 120s）
 - 移除 init.py hint 訊息中已不存在的 `--admin-channel` 參數引用
 - 移除 guardrail manifest 中 `admin_channel` placeholder 殘留宣告
 - run.sh singleton lock file 改到 `/tmp/`（修復 WSL2 DrvFs 上 flock 不生效的問題）
 - Registry.lock file 同步改到 `/tmp/`（md5 hash 隔離不同 instance）
 - **Elapsed time 與 token stats 解耦** — 完成訊息的耗時（`:clock1:`）不再依賴 token 計數才顯示。Claude CLI 未回報 usage 時，耗時仍正常顯示（progress.py line 135 條件修正）
 - **3 個 xfail 升級為 hard pass** — test_long_input_handled、test_multi_turn_context、test_same_thread_maintains_context 在單 instance 環境穩定通過
+- 清理 modules/ 殘留：5 個 `.gitkeep`（rules 已有 .md）、3 個 `__pycache__/`
 
 ## [0.4.0] - 2026-04-04
 

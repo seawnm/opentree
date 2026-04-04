@@ -21,6 +21,7 @@
   },
   "prompt_hook": "prompt_hook.py",
   "placeholders": {
-    "opentree_home": "auto"
+    "opentree_home": "auto",
+    "bot_name": "optional"
   }
 }

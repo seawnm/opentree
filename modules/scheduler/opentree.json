@@ -18,8 +18,8 @@
   },
   "permissions": {
     "allow": [
-      "Bash(uv run --directory $OPENTREE_HOME/bin:*schedule*)",
-      "Bash(uv run --directory $OPENTREE_HOME/bin:*watcher*)"
+      "Bash(uv run --directory *:*schedule_tool*)",
+      "Bash(uv run --directory *:*watcher_tool*)"
     ],
     "deny": []
   },

@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Annotated, Optional
@@ -86,6 +87,48 @@ def _bundled_modules_dir() -> Path:
 def _is_interactive() -> bool:
     """Return True if stdout is connected to a TTY (interactive mode)."""
     return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+
+def _resolve_opentree_cmd() -> tuple[str, Path | None]:
+    """Determine how to invoke opentree in run.sh.
+
+    Detection strategy: if a ``pyproject.toml`` exists at the computed
+    project root we are running from a source checkout and must use
+    ``uv run --directory``.  Otherwise the package is installed globally
+    and bare ``opentree`` is on PATH.
+
+    Returns:
+        ``(command_string, project_root_or_None)``
+    """
+    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    if (project_root / "pyproject.toml").is_file():
+        # Source checkout — always use uv run (PATH may differ at runtime)
+        return f"uv run --directory '{project_root}' opentree", project_root
+    return "opentree", None
+
+
+def _ensure_slack_deps(project_root: Path) -> None:
+    """Run 'uv sync --extra slack' to ensure Slack dependencies are installed.
+
+    Logs a warning on failure but does not raise — the init process
+    should not fail because of a transient network issue.
+    """
+    typer.echo("  Installing Slack dependencies...")
+    try:
+        subprocess.run(
+            ["uv", "sync", "--extra", "slack", "--directory", str(project_root)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        typer.echo("  Slack dependencies installed")
+    except Exception as exc:
+        logger.warning(
+            "Failed to install Slack dependencies (uv sync --extra slack): %s. "
+            "You may need to run this manually before starting the bot.",
+            exc,
+        )
 
 
 def _preflight_check(
@@ -443,10 +486,16 @@ def init_command(
     if run_sh_template.is_file():
         content = run_sh_template.read_text(encoding="utf-8")
         content = content.replace("{{opentree_home}}", str(opentree_home))
+        opentree_cmd, project_root = _resolve_opentree_cmd()
+        content = content.replace("{{opentree_cmd}}", opentree_cmd)
         run_sh_path = bin_dir / "run.sh"
         run_sh_path.write_text(content, encoding="utf-8")
         run_sh_path.chmod(0o755)
         typer.echo(f"  Created {run_sh_path}")
+
+        # Auto-install slack dependencies when using uv run mode
+        if project_root is not None:
+            _ensure_slack_deps(project_root)
 
     env_example = opentree_home / "config" / ".env.example"
     if not env_example.exists():
