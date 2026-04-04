@@ -1,6 +1,6 @@
 # OpenTree Bot Runner — 待辦事項與下一步
 
-> 更新日期：2026-03-31（P2 Simulation fixes done, commit 6d0969c）
+> 更新日期：2026-04-04（module update + LOW issues + init admin_users 完成）
 > 來源 Thread：betaroom 1774800803.111649
 
 ## 已完成項目摘要
@@ -165,8 +165,8 @@ WSL2 環境評估結果：
 - [x] **Tool Tracker + Timeline**：追蹤工具名稱/耗時、completion message 含 timeline ✅
 - [x] **Memory Extractor**：正則啟發式萃取 (EN/ZH)、auto-persist to memory.md（commit `65e0dab`）✅
 
-### opentree module update 指令
-- [ ] 模組版本升級流程（比對 bundled vs installed 版本，選擇性升級）
+### opentree module update 指令 — ✅ 完成（commit `65fa82d`, 2026-04-03）
+- [x] 模組版本升級流程（比對 bundled vs installed 版本，選擇性升級）
 - 來源：handoff.md #3
 
 ### Simulation Issues（MEDIUM — Phase 1）— ✅ 全部完成（commit `6d0969c`）
@@ -178,14 +178,14 @@ WSL2 環境評估結果：
 | #9 無磁碟空間監控 | log + session 可能填滿磁碟 | health.py + hourly check + WARNING threshold | ✅ 完成 |
 | #10 exec_module 物件記憶體累積 | hook 模組未被 GC 回收 | 由 PromptHookCache 解決（單次載入） | ✅ 完成 |
 
-### Code Review Issues（LOW）
+### Code Review Issues（LOW）— ✅ 全部修復（commit `9f14eee`, 2026-04-03）
 
-| Issue | 問題 | 來源 |
-|-------|------|------|
-| run.sh log() 僅輸出 stdout | wrapper 日誌和 bot 日誌分離，需文件說明 | review-log (Phase 3) |
-| sleep 變數未引號 | `$DNS_CHECK_INTERVAL` 等數值變數未引號，`set -u` 下潛在風險 | review-log (Phase 3) |
-| bot.py 重複 startup log | 兩行 "starting" 訊息，第一行多餘 | review-log (Phase 3) |
-| test_logging 共用全域 logger 狀態 | 測試間 root logger handler 可能洩漏，需改用 autouse fixture | review-log (Phase 3) |
+| Issue | 問題 | 來源 | 狀態 |
+|-------|------|------|------|
+| run.sh log() 僅輸出 stdout | wrapper 日誌和 bot 日誌分離，需文件說明 | review-log (Phase 3) | ✅ 已修復 |
+| sleep 變數未引號 | `$DNS_CHECK_INTERVAL` 等數值變數未引號，`set -u` 下潛在風險 | review-log (Phase 3) | ✅ 已修復 |
+| bot.py 重複 startup log | 兩行 "starting" 訊息，第一行多餘 | review-log (Phase 3) | ✅ 已修復 |
+| test_logging 共用全域 logger 狀態 | 測試間 root logger handler 可能洩漏，需改用 autouse fixture | review-log (Phase 3) | ✅ 已修復 |
 
 ---
 
@@ -203,10 +203,10 @@ WSL2 環境評估結果：
 
 ## 下一個 Session 的建議起始點
 
-> v0.2.0 已發布，P0/P1/P2 全部完成，Phase 4 進階功能全部完成。
+> v0.3.0 已發布，module update + LOW issues + init admin_users 全部完成。準備 v0.4.0 發版。
 
-1. **v0.3.0 發布**（Phase 4 features 構成新 minor release）
-2. **opentree module update 指令**（模組版本升級流程）
-3. **Bot Walter 正式部署**（systemd/screen 持久化 + log rotation 驗證）
-4. **LOW issues**（run.sh log、sleep 引號、重複 startup log、test logger fixture）
-5. **DOGI 遷移評估**（991 行 CLAUDE.md → OpenTree 模組化）
+1. **v0.4.0 發布**（module update + init 參數改造，構成新 minor release）
+2. **完整 E2E 全跑驗證**（含 TaskQueue bug fix 後的回歸測試）
+3. **v0.3.1 發布**（post-v0.3.0 bug fixes，若決定先 patch release）
+4. **DOGI 遷移評估**（991 行 CLAUDE.md → OpenTree 模組化）
+5. **flock DrvFs 修復**（WSL2 `/mnt/e/` 上 flock 不生效）

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-04
+
 ### Added
 - **`opentree module update` 指令** — 比對 bundled vs installed 版本，支援 `--all`/`--dry-run`/`--force`。純 Python tuple-based semver 比較（無外部依賴）。新增 `core/version.py`
 - **E2E single-instance guard** — session-scoped autouse fixture，所有 E2E 測試前自動檢查 Bot Walter instance 數（`pgrep` 結果 >2 = 多 instance → `pytest.exit` 中止）
