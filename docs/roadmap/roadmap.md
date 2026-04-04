@@ -8,9 +8,9 @@
 
 - [x] **flock DrvFs 修復** — WSL2 `/mnt/e/` 上 flock 不生效，需改用 `/tmp/` 路徑或 PID file lock（來自 thread 1775069650）— ✅ 2026-04-04
 - [x] **remaining-tasks.md 更新** — module update、LOW issues 已完成但文件未標記 done（來自 thread 1775069650）— ✅ 2026-04-04
-- [x] **v0.3.1 發布** — post-v0.3.0 已有 12+ commits（含 P0 TaskQueue bug fix），應發版（來自 thread 1775069650）— ✅ 已由 v0.4.0 取代 (2026-04-04)
-- [x] **完整 E2E 全跑一次** — 單 instance + bug fix 後需完成 75 tests 全跑驗證（來自 thread 1775069650）— ✅ 2026-04-04，75 tests: 52 passed, 5 skipped, 9 xfailed, 4 xpassed, 5 failed (flaky)
-- [x] **完整 E2E 全跑驗證（含 TaskQueue bug fix）** — TaskQueue promotion bug 修復後的回歸測試 — ✅ 2026-04-04，TaskQueue promotion bug fix 已驗證（concurrent_requests PASSED）
+- [ ] **v0.3.1 發布** — post-v0.3.0 已有 12+ commits（含 P0 TaskQueue bug fix），應發版（來自 thread 1775069650）
+- [ ] **完整 E2E 全跑一次** — 單 instance + bug fix 後需完成 75 tests 全跑驗證（來自 thread 1775069650）
+- [ ] **完整 E2E 全跑驗證（含 TaskQueue bug fix）** — TaskQueue promotion bug 修復後的回歸測試
 - [x] **opentree init 加入 admin_users 必填設定** — onboard 流程中一併設定管理者（來自 thread 1775069650）— ✅ commit 6c9cf5b (2026-04-04)
 
 ## 中期

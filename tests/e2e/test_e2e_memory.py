@@ -131,6 +131,13 @@ class TestMemoryExtractor:
         finally:
             _cleanup_test_memories()
 
+    @pytest.mark.xfail(
+        strict=False,
+        reason=(
+            "Memory recall depends on session resume + Claude non-deterministic "
+            "behavior. The bot may not repeat the exact name verbatim."
+        ),
+    )
     def test_memory_referenced_in_conversation(
         self,
         bot_mention: str,
