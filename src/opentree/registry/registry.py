@@ -7,6 +7,7 @@ File writes use atomic pattern: write to .tmp, then os.replace().
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -58,8 +59,10 @@ class Registry:
                 data = Registry.register(data, ...)
                 Registry.save(registry_path, data)
         """
-        lock_path = registry_path.with_suffix(".lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        # Lock file in /tmp (native Linux fs) because flock does not work on DrvFs
+        # (/mnt/ in WSL2). Hash the registry path to create a unique lock per instance.
+        path_hash = hashlib.md5(str(registry_path).encode()).hexdigest()[:16]
+        lock_path = Path(f"/tmp/opentree-registry-{path_hash}.lock")
         lock_file = open(lock_path, "w")  # noqa: SIM115
         locked = False
         try:

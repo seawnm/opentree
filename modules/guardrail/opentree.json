@@ -23,7 +23,6 @@
   },
   "prompt_hook": null,
   "placeholders": {
-    "admin_channel": "optional",
     "admin_description": "optional"
   }
 }

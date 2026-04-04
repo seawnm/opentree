@@ -353,8 +353,8 @@ def init_command(
             err=True,
         )
         typer.echo(
-            "\nHint: Provide missing values via --admin-channel, "
-            "--bot-name, or --team-name flags.",
+            "\nHint: Provide missing values via "
+            "--bot-name or --team-name flags.",
             err=True,
         )
         raise typer.Exit(code=1)

@@ -197,7 +197,9 @@ trap 'stop_watchdog' EXIT
 mkdir -p "$LOG_DIR" "$DATA_DIR"
 
 # -- Singleton lock: prevent multiple wrappers from running concurrently --
-LOCK_FILE="$DATA_DIR/wrapper.lock"
+# Lock file in /tmp (native Linux fs) because flock does not work on DrvFs (/mnt/ in WSL2)
+LOCK_HASH=$(echo -n "$OPENTREE_HOME" | md5sum | cut -d' ' -f1)
+LOCK_FILE="/tmp/opentree-wrapper-${LOCK_HASH}.lock"
 exec 200>"$LOCK_FILE"
 if ! flock -n 200; then
     log "ERROR: Another wrapper is already running (lock: $LOCK_FILE). Exiting."

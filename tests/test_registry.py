@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -461,9 +462,15 @@ class TestQuery:
 class TestLock:
     """Registry.lock() context manager tests."""
 
+    @staticmethod
+    def _lock_path_for(registry_path: Path) -> Path:
+        """Compute the /tmp/ lock path matching Registry.lock() logic."""
+        path_hash = hashlib.md5(str(registry_path).encode()).hexdigest()[:16]
+        return Path(f"/tmp/opentree-registry-{path_hash}.lock")
+
     def test_lock_context_manager(self, registry_path: Path) -> None:
         """lock() creates a .lock file and the body executes normally."""
-        lock_path = registry_path.with_suffix(".lock")
+        lock_path = self._lock_path_for(registry_path)
 
         with Registry.lock(registry_path):
             # Lock file should exist while inside the context
@@ -474,8 +481,7 @@ class TestLock:
 
     def test_lock_already_held(self, registry_path: Path) -> None:
         """Attempting to acquire a held lock raises TimeoutError."""
-        lock_path = registry_path.with_suffix(".lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self._lock_path_for(registry_path)
 
         # Hold the lock externally
         lock_file = open(lock_path, "w")
