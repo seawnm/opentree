@@ -210,6 +210,8 @@ class ProgressReporter:
         self._stop_event = threading.Event()
         self._update_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+        self._completed: bool = False    # safeguard: set after complete() sends final
+        self._tick_count: int = 0        # counter for progress update ticks
 
     # ------------------------------------------------------------------
     # Public interface
@@ -230,6 +232,10 @@ class ProgressReporter:
             thread_ts=self._thread_ts,
         )
         self._message_ts = result.get("ts", "") if result else ""
+        logger.info(
+            "[ProgressReporter.start] channel=%s thread_ts=%s message_ts=%s",
+            self._channel, self._thread_ts, self._message_ts,
+        )
 
         # Start background update loop
         self._update_thread = threading.Thread(
@@ -257,10 +263,27 @@ class ProgressReporter:
         tool_timeline: str = "",
     ) -> None:
         """Send final response and stop background updates."""
+        logger.info(
+            "[ProgressReporter.complete] STOPPING LOOP: channel=%s message_ts=%s is_error=%s ticks_so_far=%d",
+            self._channel, self._message_ts, is_error, self._tick_count,
+        )
         # Stop loop first so it does not race against our final update
         self._stop_event.set()
         if self._update_thread is not None:
             self._update_thread.join(timeout=2.0)
+
+        thread_alive = self._update_thread.is_alive() if self._update_thread else False
+        self._completed = True
+        if thread_alive:
+            logger.warning(
+                "[ProgressReporter.complete] UPDATE THREAD STILL ALIVE after join(2s)! "
+                "Race condition possible. channel=%s message_ts=%s",
+                self._channel, self._message_ts,
+            )
+        logger.info(
+            "[ProgressReporter.complete] LOOP STOPPED: thread_still_alive=%s ticks_sent=%d channel=%s message_ts=%s",
+            thread_alive, self._tick_count, self._channel, self._message_ts,
+        )
 
         if not self._message_ts:
             return
@@ -289,9 +312,18 @@ class ProgressReporter:
             text=fallback,
             blocks=blocks,
         )
+        logger.info(
+            "[ProgressReporter.complete] FINAL UPDATE SENT: channel=%s message_ts=%s fallback=%.60s blocks=%d",
+            self._channel, self._message_ts, fallback, len(blocks),
+        )
 
     def stop(self) -> None:
         """Stop the background update thread."""
+        thread_alive = self._update_thread.is_alive() if self._update_thread else False
+        logger.info(
+            "[ProgressReporter.stop] channel=%s message_ts=%s thread_was_alive=%s completed=%s ticks=%d",
+            self._channel, self._message_ts, thread_alive, self._completed, self._tick_count,
+        )
         self._stop_event.set()
         if self._update_thread is not None:
             self._update_thread.join(timeout=2.0)
@@ -316,13 +348,28 @@ class ProgressReporter:
         if not self._message_ts:
             return
 
+        # Safeguard: skip if complete() already sent the final response.
+        if self._completed:
+            logger.warning(
+                "[ProgressReporter._push_progress] LATE UPDATE BLOCKED after complete()! "
+                "channel=%s message_ts=%s tick=%d",
+                self._channel, self._message_ts, self._tick_count,
+            )
+            return
+
         elapsed = time.time() - self._start_time
 
         with self._lock:
             state = self._state
 
+        self._tick_count += 1
         blocks = build_progress_blocks(state, elapsed=elapsed)
         fallback = f":clock1: {int(elapsed)}s"
+
+        logger.info(
+            "[ProgressReporter._push_progress] tick=%d phase=%s elapsed=%.1fs channel=%s message_ts=%s",
+            self._tick_count, state.phase.value, elapsed, self._channel, self._message_ts,
+        )
 
         try:
             self._slack.update_message(

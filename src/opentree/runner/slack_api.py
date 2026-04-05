@@ -132,7 +132,13 @@ class SlackAPI:
             if thread_ts:
                 kwargs["thread_ts"] = thread_ts
             result = self._client.chat_postMessage(**kwargs)
-            return _extract_data(result)
+            data = _extract_data(result)
+            new_ts = data.get("ts", "")
+            logger.info(
+                "send_message: channel=%s thread_ts=%s new_ts=%s text=%.60s",
+                channel, thread_ts, new_ts, text,
+            )
+            return data
         except Exception as exc:
             logger.error("send_message failed (channel=%s): %s", channel, exc)
             return {}
@@ -162,7 +168,12 @@ class SlackAPI:
             if blocks is not None:
                 kwargs["blocks"] = blocks
             result = self._client.chat_update(**kwargs)
-            return _extract_data(result)
+            data = _extract_data(result)
+            logger.info(
+                "update_message: channel=%s ts=%s blocks=%d text=%.60s",
+                channel, ts, len(blocks) if blocks else 0, text,
+            )
+            return data
         except Exception as exc:
             logger.error("update_message failed (channel=%s, ts=%s): %s", channel, ts, exc)
             return {}
@@ -171,6 +182,7 @@ class SlackAPI:
         """Delete a message. Returns True on success."""
         try:
             self._client.chat_delete(channel=channel, ts=ts)
+            logger.info("delete_message: channel=%s ts=%s", channel, ts)
             return True
         except Exception as exc:
             logger.warning("delete_message failed (channel=%s, ts=%s): %s", channel, ts, exc)
