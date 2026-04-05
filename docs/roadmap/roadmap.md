@@ -13,6 +13,7 @@
 - [ ] **完整 E2E 全跑驗證（含 TaskQueue bug fix）** — TaskQueue promotion bug 修復後的回歸測試
 - [x] **opentree init 加入 admin_users 必填設定** — onboard 流程中一併設定管理者（來自 thread 1775069650）— ✅ commit 6c9cf5b (2026-04-04)
 - [x] **onboarding 指令偵測修復** — init 自動偵測 source checkout 並使用 `uv run --directory`（含 quoting）+ 自動安裝 slack-bolt — ✅ commit 570c65c (2026-04-05)
+- [x] **system prompt 資訊缺口修復** — is_admin、build_channel_block、thread_participants、workspace 動態化、記憶讀取提示（參考 DOGI 做法）— ✅ commit aad02a9 (2026-04-05)
 
 ## 中期
 
