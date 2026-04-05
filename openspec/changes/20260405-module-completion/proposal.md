@@ -43,6 +43,6 @@
 
 ## Risk
 
-- **LOW**：所有變更有完整測試覆蓋（1100 passed, 89% coverage）
-- **MEDIUM**：requirement hook 的 pyyaml 依賴未加入 pyproject.toml（4 個測試 skipped）
-- **KNOWN**：`thread_participants` 欄位已宣告但 Dispatcher 尚未填入（待 SlackAPI 擴充）
+- **LOW**：所有變更有完整測試覆蓋（1123 passed, 0 skipped, 89% coverage）
+- ~~**MEDIUM**：requirement hook 的 pyyaml 依賴未加入 pyproject.toml~~ → 已解決：pyyaml>=6.0 加入主依賴
+- ~~**KNOWN**：`thread_participants` 欄位已宣告但 Dispatcher 尚未填入~~ → 已解決：`_extract_thread_participants` 已實作
