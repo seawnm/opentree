@@ -5,6 +5,10 @@
 ## [Unreleased]
 
 ### Added
+- **`is_admin` 欄位** — PromptContext 新增 `is_admin: bool`，由 Dispatcher 比對 `RunnerConfig.admin_users` 自動計算，system prompt 輸出「權限等級：Admin」或「權限等級：一般使用者」
+- **`build_channel_block()`** — 新增頻道資訊區塊，輸出頻道 ID、Thread TS、Workspace（參考 DOGI `build_channel_block`）
+- **thread_participants 自動填入** — Dispatcher 從 thread 歷史提取參與者 display name，slack hook 的多人 thread 警告現可正常觸發
+- **記憶讀取提示** — `build_identity_block()` 在記憶路徑後加入「如需了解此使用者的偏好和習慣，請使用 Read 工具讀取上述檔案」
 - **`has_result_event` 旗標** — StreamParser 的 ProgressState 新增旗標，區分「token 真的是 0」和「沒收到 result event」
 - **Token 缺失 warning log** — Claude CLI stream 未回報 result event 或 token 都為 0 時，記錄 warning（含 pid、exit_code、timed_out 狀態）
 - **PromptContext 擴充** — 新增 `thread_participants`（Thread 參與者列表）和 `opentree_home`（根目錄路徑）欄位，供模組 hook 動態注入
@@ -15,6 +19,7 @@
 - **README 完整覆寫** — 從 21 行佔位符更新為完整英文文件，涵蓋功能特色、安裝、Quick Start、模組系統、架構、開發指引
 
 ### Changed
+- **workspace 動態化** — `_build_prompt_context()` 的 workspace 從硬編碼 `"default"` 改為 `team_name or "default"`
 - **Modules manifest permissions 路徑統一** — scheduler、slack、audit-logger、requirement 的 `permissions.allow` 從 `$OPENTREE_HOME/bin` 改為 `Bash(uv run --directory *:*<tool>*)` 格式，對齊 rules 中的實際 CLI 指令
 - **Modules manifest placeholder 補齊** — personality 補 `admin_description`、guardrail 補 `bot_name`、memory 補 `bot_name`
 

@@ -116,6 +116,7 @@ class TestPromptContext:
             "team_name",
             "memory_path",
             "is_new_user",
+            "is_admin",
             "thread_participants",
             "opentree_home",
         }
@@ -220,7 +221,9 @@ class TestBuildIdentityBlock:
     def test_build_identity_empty(self) -> None:
         ctx = PromptContext()
         lines = build_identity_block(ctx)
-        assert lines == []
+        # Even empty context outputs admin status line
+        assert len(lines) == 1
+        assert "一般使用者" in lines[0]
 
     def test_build_identity_with_memory_path(self) -> None:
         ctx = PromptContext(
@@ -237,10 +240,9 @@ class TestBuildIdentityBlock:
             user_display_name="walter",
         )
         lines = build_identity_block(ctx)
-        # Should not contain parentheses with duplicate
-        assert len(lines) == 1
-        assert "walter" in lines[0]
-        assert "(" not in lines[0]
+        name_line = lines[0]
+        assert "walter" in name_line
+        assert "(" not in name_line
 
 
 # ------------------------------------------------------------------ #
@@ -486,3 +488,93 @@ class TestPromptHookCache:
         assert any("error" in l.lower() for l in lines)
         # Should NOT cache the broken hook
         assert cache.get("bad") is None
+
+
+# ------------------------------------------------------------------ #
+# build_channel_block
+# ------------------------------------------------------------------ #
+
+
+class TestBuildChannelBlock:
+    """build_channel_block outputs channel/thread/workspace info."""
+
+    def test_channel_block_with_all_fields(self) -> None:
+        from opentree.core.prompt import PromptContext, build_channel_block
+        ctx = PromptContext(
+            channel_id="C0TEST123",
+            thread_ts="1234567890.123456",
+            team_name="my-team",
+            workspace="my-workspace",
+        )
+        lines = build_channel_block(ctx)
+        assert any("C0TEST123" in l for l in lines)
+        assert any("1234567890.123456" in l for l in lines)
+        assert any("my-team" in l for l in lines)
+        assert any("my-workspace" in l for l in lines)
+
+    def test_channel_block_empty_context(self) -> None:
+        from opentree.core.prompt import PromptContext, build_channel_block
+        ctx = PromptContext()
+        lines = build_channel_block(ctx)
+        assert lines == []
+
+    def test_channel_block_workspace_same_as_team(self) -> None:
+        from opentree.core.prompt import PromptContext, build_channel_block
+        ctx = PromptContext(
+            channel_id="C0TEST",
+            team_name="same-name",
+            workspace="same-name",
+        )
+        lines = build_channel_block(ctx)
+        # Should not duplicate workspace line when same as team_name
+        workspace_lines = [l for l in lines if "工作區" in l]
+        assert len(workspace_lines) == 0
+
+
+# ------------------------------------------------------------------ #
+# build_identity_block — admin status
+# ------------------------------------------------------------------ #
+
+
+class TestIdentityBlockAdmin:
+    """build_identity_block outputs admin status."""
+
+    def test_admin_user_shows_admin(self) -> None:
+        from opentree.core.prompt import PromptContext, build_identity_block
+        ctx = PromptContext(
+            user_display_name="Walter",
+            user_id="U0TEST",
+            is_admin=True,
+        )
+        lines = build_identity_block(ctx)
+        assert any("Admin" in l for l in lines)
+
+    def test_regular_user_shows_regular(self) -> None:
+        from opentree.core.prompt import PromptContext, build_identity_block
+        ctx = PromptContext(
+            user_display_name="Alice",
+            user_id="U0ALICE",
+            is_admin=False,
+        )
+        lines = build_identity_block(ctx)
+        assert any("一般使用者" in l for l in lines)
+
+    def test_memory_read_instruction(self) -> None:
+        from opentree.core.prompt import PromptContext, build_identity_block
+        ctx = PromptContext(
+            user_display_name="Walter",
+            user_id="U0TEST",
+            memory_path="/tmp/test/memory.md",
+        )
+        lines = build_identity_block(ctx)
+        assert any("Read" in l and "偏好" in l for l in lines)
+
+    def test_no_memory_no_read_instruction(self) -> None:
+        from opentree.core.prompt import PromptContext, build_identity_block
+        ctx = PromptContext(
+            user_display_name="Walter",
+            user_id="U0TEST",
+            memory_path="",
+        )
+        lines = build_identity_block(ctx)
+        assert not any("Read" in l and "偏好" in l for l in lines)

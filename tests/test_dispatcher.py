@@ -210,11 +210,13 @@ class TestBuildPromptContext:
         ctx = dispatcher._build_prompt_context(task)
         assert ctx.memory_path.endswith("memory.md")
 
-    def test_workspace_is_default(self, tmp_path):
+    def test_workspace_uses_team_name_or_default(self, tmp_path):
         dispatcher, _, _ = _make_dispatcher(tmp_path)
         task = make_task()
         ctx = dispatcher._build_prompt_context(task)
-        assert ctx.workspace == "default"
+        # workspace = team_name when set, "default" when empty
+        expected = dispatcher._user_config.team_name or "default"
+        assert ctx.workspace == expected
 
 
 # ---------------------------------------------------------------------------
@@ -1611,3 +1613,74 @@ class TestCheckNewUser:
         f = tmp_path / "memory.md"
         f.write_text("# Walter 的記憶\n\n## Pinned\n\n- 喜歡喝咖啡\n", encoding="utf-8")
         assert Dispatcher._check_new_user(str(f)) is False
+
+
+# ---------------------------------------------------------------------------
+# _build_prompt_context — admin detection
+# ---------------------------------------------------------------------------
+
+class TestBuildPromptContextAdmin:
+    """_build_prompt_context correctly computes is_admin."""
+
+    def test_admin_user_detected(self, tmp_path):
+        """User in admin_users list should have is_admin=True."""
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        dispatcher._runner_config = RunnerConfig(admin_users=("U0ADMIN",))
+        task = make_task(
+            user_id="U0ADMIN",
+            channel_id="C0TEST",
+            thread_ts="",
+            text="hello",
+            message_ts="1234.5678",
+        )
+        ctx = dispatcher._build_prompt_context(task, user_name="admin", display_name="Admin")
+        assert ctx.is_admin is True
+
+    def test_non_admin_user(self, tmp_path):
+        """User NOT in admin_users list should have is_admin=False."""
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        dispatcher._runner_config = RunnerConfig(admin_users=("U0ADMIN",))
+        task = make_task(
+            user_id="U0REGULAR",
+            channel_id="C0TEST",
+            thread_ts="",
+            text="hello",
+            message_ts="1234.5678",
+        )
+        ctx = dispatcher._build_prompt_context(task, user_name="regular", display_name="Regular")
+        assert ctx.is_admin is False
+
+    def test_empty_admin_users(self, tmp_path):
+        """Empty admin_users means no one is admin."""
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        dispatcher._runner_config = RunnerConfig(admin_users=())
+        task = make_task(
+            user_id="U0ANYONE",
+            channel_id="C0TEST",
+            thread_ts="",
+            text="hello",
+            message_ts="1234.5678",
+        )
+        ctx = dispatcher._build_prompt_context(task, user_name="anyone", display_name="Anyone")
+        assert ctx.is_admin is False
+
+    def test_workspace_uses_team_name(self, tmp_path):
+        """workspace should use team_name, not hardcoded 'default'."""
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        from opentree.core.config import UserConfig
+        dispatcher._user_config = UserConfig(
+            bot_name=dispatcher._user_config.bot_name,
+            team_name="my-team",
+            admin_channel="",
+            admin_description="",
+            opentree_home=dispatcher._user_config.opentree_home,
+        )
+        task = make_task(
+            user_id="U0TEST",
+            channel_id="C0TEST",
+            thread_ts="",
+            text="hello",
+            message_ts="1234.5678",
+        )
+        ctx = dispatcher._build_prompt_context(task, user_name="test", display_name="Test")
+        assert ctx.workspace == "my-team"

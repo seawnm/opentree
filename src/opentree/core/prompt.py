@@ -15,7 +15,7 @@ import json
 import re
 import sys
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -125,6 +125,7 @@ class PromptContext:
     team_name: str = ""
     memory_path: str = ""
     is_new_user: bool = False
+    is_admin: bool = False
     thread_participants: tuple[str, ...] = ()
     opentree_home: str = ""
 
@@ -140,6 +141,7 @@ class PromptContext:
             "team_name": self.team_name,
             "memory_path": self.memory_path,
             "is_new_user": self.is_new_user,
+            "is_admin": self.is_admin,
             "thread_participants": list(self.thread_participants),
             "opentree_home": self.opentree_home,
         }
@@ -189,8 +191,31 @@ def build_identity_block(context: PromptContext) -> list[str]:
             parts.append(f"使用者：{context.user_display_name}")
     if context.user_id:
         parts.append(f"使用者 ID：{context.user_id}")
+    if context.is_admin:
+        parts.append("權限等級：Admin")
+    else:
+        parts.append("權限等級：一般使用者")
     if context.memory_path:
         parts.append(f"記憶檔案：{context.memory_path}")
+        parts.append("如需了解此使用者的偏好和習慣，請使用 Read 工具讀取上述檔案。")
+    return parts
+
+
+def build_channel_block(context: PromptContext) -> list[str]:
+    """Build channel and workspace context block.
+
+    Mirrors DOGI's ``build_channel_block`` so that Claude can reference
+    channel_id and thread_ts when invoking tools.
+    """
+    parts: list[str] = []
+    if context.channel_id:
+        parts.append(f"目前頻道 ID：{context.channel_id}")
+    if context.thread_ts:
+        parts.append(f"目前 Thread TS：{context.thread_ts}")
+    if context.team_name:
+        parts.append(f"目前 Workspace：{context.team_name}")
+    if context.workspace and context.workspace != context.team_name:
+        parts.append(f"目前工作區：{context.workspace}")
     return parts
 
 
@@ -354,6 +379,7 @@ def assemble_system_prompt(
         build_config_block(config),
         build_paths_block(config),
         build_identity_block(context),
+        build_channel_block(context),
         collect_module_prompts(opentree_home, registry, context),
     ]
 

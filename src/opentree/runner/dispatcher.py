@@ -7,7 +7,6 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from opentree.core.config import UserConfig, load_user_config
 from opentree.core.prompt import PromptContext, assemble_system_prompt
@@ -18,11 +17,11 @@ from opentree.runner.claude_process import ClaudeProcess, ClaudeResult
 from opentree.runner.config import RunnerConfig, load_runner_config
 from opentree.runner.retry import RetryConfig, classify_error, should_retry
 from opentree.runner.file_handler import build_file_context, cleanup_temp, download_files
-from opentree.runner.progress import ProgressReporter, build_completion_blocks
+from opentree.runner.progress import ProgressReporter
 from opentree.runner.session import SessionManager
 from opentree.runner.slack_api import SlackAPI
 from opentree.runner.stream_parser import Phase
-from opentree.runner.task_queue import Task, TaskQueue, TaskStatus
+from opentree.runner.task_queue import Task, TaskQueue
 from opentree.runner.thread_context import build_thread_context
 from opentree.runner.tool_tracker import ToolTracker
 
@@ -114,7 +113,7 @@ class Dispatcher:
         self,
         text: str,
         bot_user_id: str,
-        files: Optional[list] = None,
+        files: list | None = None,
     ) -> ParsedMessage:
         """Parse a Slack message: strip leading @bot mention, detect admin commands.
 
@@ -287,7 +286,8 @@ class Dispatcher:
             reporter.start()
 
             # Step 2: resolve user_name from Slack; sanitize for path safety.
-            resolved_name = self._slack.get_user_display_name(task.user_id)
+            display_name = self._slack.get_user_display_name(task.user_id) or ""
+            resolved_name = display_name
             if not resolved_name or not re.match(r"^[a-zA-Z0-9_-]+$", resolved_name):
                 # Fallback to user_id which is always safe ([A-Z0-9]+).
                 resolved_name = task.user_id
@@ -308,7 +308,9 @@ class Dispatcher:
             )
 
             # Step 5: build PromptContext.
-            context = self._build_prompt_context(task, user_name=resolved_name)
+            context = self._build_prompt_context(
+                task, user_name=resolved_name, display_name=display_name,
+            )
 
             # Step 6: assemble system prompt.
             system_prompt = assemble_system_prompt(
@@ -521,7 +523,39 @@ class Dispatcher:
             return True
         return False
 
-    def _build_prompt_context(self, task: Task, user_name: str = "") -> PromptContext:
+    def _extract_thread_participants(
+        self, channel_id: str, thread_ts: str,
+    ) -> list[str]:
+        """Extract unique participant display names from thread history.
+
+        Excludes the bot itself. Returns an empty list if thread_ts is
+        empty or the API call fails.
+        """
+        if not thread_ts:
+            return []
+        try:
+            messages = self._slack.get_thread_replies(
+                channel_id, thread_ts, limit=50,
+            )
+        except Exception:
+            logger.debug("Failed to fetch thread replies for participants")
+            return []
+        seen: set[str] = set()
+        names: list[str] = []
+        for msg in messages:
+            uid = msg.get("user", "")
+            if uid and uid != self._slack.bot_user_id and uid not in seen:
+                seen.add(uid)
+                name = self._slack.get_user_display_name(uid) or uid
+                names.append(name)
+        return names
+
+    def _build_prompt_context(
+        self,
+        task: Task,
+        user_name: str = "",
+        display_name: str = "",
+    ) -> PromptContext:
         """Build a per-request :class:`~opentree.core.prompt.PromptContext`.
 
         Each task gets its own context so that user_id, channel_id, and
@@ -533,6 +567,8 @@ class Dispatcher:
                 match ``^[a-zA-Z0-9_-]+$`` or be the user_id fallback so it
                 is safe to embed in a filesystem path.  Defaults to
                 ``task.user_name`` when not provided (test-only path).
+            display_name: Original Slack display name (human-readable,
+                before filesystem sanitization).
 
         Returns:
             A frozen :class:`PromptContext` instance.
@@ -541,15 +577,32 @@ class Dispatcher:
         memory_path = str(
             self._home / "data" / "memory" / name / "memory.md"
         )
+        # Determine admin status from runner config.
+        is_admin = bool(
+            self._runner_config.admin_users
+            and task.user_id in self._runner_config.admin_users
+        )
+
+        # Extract thread participant display names.
+        participants = self._extract_thread_participants(
+            task.channel_id, task.thread_ts,
+        )
+
+        # Workspace: use team_name when available, fall back to "default".
+        workspace = self._user_config.team_name or "default"
+
         return PromptContext(
             user_id=task.user_id,
             user_name=name,
+            user_display_name=display_name or name,
             channel_id=task.channel_id,
             thread_ts=task.thread_ts,
-            workspace="default",
+            workspace=workspace,
             team_name=self._user_config.team_name,
             memory_path=memory_path,
             is_new_user=self._check_new_user(memory_path),
+            is_admin=is_admin,
+            thread_participants=tuple(participants),
             opentree_home=str(self._home),
         )
 
