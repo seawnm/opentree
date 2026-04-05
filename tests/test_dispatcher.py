@@ -158,12 +158,12 @@ class TestParseMessage:
         dispatcher, _, _ = _make_dispatcher(tmp_path)
         files = [{"id": "F001", "name": "test.txt"}]
         result = dispatcher.parse_message("<@UBOT123> hello", "UBOT123", files=files)
-        assert result.files == files
+        assert result.files == tuple(files)
 
     def test_no_files_returns_empty(self, tmp_path):
         dispatcher, _, _ = _make_dispatcher(tmp_path)
         result = dispatcher.parse_message("<@UBOT123> hello", "UBOT123")
-        assert result.files == []
+        assert result.files == ()
 
     def test_mention_in_middle_not_stripped(self, tmp_path):
         """Only leading mention is stripped."""
@@ -1684,3 +1684,150 @@ class TestBuildPromptContextAdmin:
         )
         ctx = dispatcher._build_prompt_context(task, user_name="test", display_name="Test")
         assert ctx.workspace == "my-team"
+
+
+# ---------------------------------------------------------------------------
+# Fix A: thread_participants populated from thread history
+# ---------------------------------------------------------------------------
+
+class TestThreadParticipants:
+    """Verify _build_prompt_context fills thread_participants from thread history."""
+
+    def test_thread_participants_populated(self, tmp_path):
+        """thread_participants should contain display names from thread replies."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+
+        # Simulate thread replies from two users (plus the bot).
+        slack_api.get_thread_replies.return_value = [
+            {"user": "U001", "text": "hello"},
+            {"user": "UBOT123", "text": "response"},  # bot — excluded
+            {"user": "U002", "text": "follow up"},
+            {"user": "U001", "text": "another"},       # duplicate — deduplicated
+        ]
+        # Map user IDs to display names.
+        def _display_name(uid):
+            return {"U001": "alice", "U002": "bob"}.get(uid, "")
+        slack_api.get_user_display_name.side_effect = _display_name
+
+        task = make_task(
+            user_id="U001",
+            channel_id="C001",
+            thread_ts="1234.5678",
+        )
+        ctx = dispatcher._build_prompt_context(task)
+        assert "alice" in ctx.thread_participants
+        assert "bob" in ctx.thread_participants
+        assert len(ctx.thread_participants) == 2
+
+    def test_thread_participants_empty_for_new_thread(self, tmp_path):
+        """New thread (empty thread_ts) should have empty participants."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task(thread_ts="")
+        ctx = dispatcher._build_prompt_context(task)
+        assert ctx.thread_participants == ()
+
+    def test_thread_participants_api_failure_returns_empty(self, tmp_path):
+        """When get_thread_replies fails, participants should be empty tuple."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        slack_api.get_thread_replies.side_effect = Exception("API error")
+        task = make_task(thread_ts="1234.5678")
+        ctx = dispatcher._build_prompt_context(task)
+        assert ctx.thread_participants == ()
+
+
+# ---------------------------------------------------------------------------
+# Fix C: _check_new_user cache
+# ---------------------------------------------------------------------------
+
+class TestCheckNewUserCache:
+    """_check_new_user result is cached for known existing users."""
+
+    def test_known_user_cached(self, tmp_path):
+        """Second call for the same non-new user should NOT read the file again."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+
+        # Create a memory file with real content so _check_new_user returns False.
+        memory_dir = tmp_path / "data" / "memory" / "alice"
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        memory_file = memory_dir / "memory.md"
+        memory_file.write_text("# alice\n\n- likes coffee\n", encoding="utf-8")
+
+        memory_path = str(memory_file)
+
+        # First call — reads the file, returns False, caches.
+        from opentree.runner.dispatcher import Dispatcher
+        assert Dispatcher._check_new_user(memory_path) is False
+
+        # Now call _build_prompt_context twice and verify the file is read only once.
+        task = make_task(user_id="U001", user_name="alice")
+        # Patch _check_new_user to track calls.
+        call_count = {"n": 0}
+        original_check = Dispatcher._check_new_user
+
+        @staticmethod
+        def counting_check(mp):
+            call_count["n"] += 1
+            return original_check(mp)
+
+        with patch.object(Dispatcher, "_check_new_user", counting_check):
+            ctx1 = dispatcher._build_prompt_context(task, user_name="alice")
+            ctx2 = dispatcher._build_prompt_context(task, user_name="alice")
+
+        # First call invokes _check_new_user; second call uses cache.
+        assert call_count["n"] == 1
+        assert ctx1.is_new_user is False
+        assert ctx2.is_new_user is False
+
+    def test_new_user_not_cached(self, tmp_path):
+        """A new user (no memory file) should NOT be cached — checked every time."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+
+        task = make_task(user_id="U999", user_name="newbie")
+
+        from opentree.runner.dispatcher import Dispatcher
+        call_count = {"n": 0}
+        original_check = Dispatcher._check_new_user
+
+        @staticmethod
+        def counting_check(mp):
+            call_count["n"] += 1
+            return original_check(mp)
+
+        with patch.object(Dispatcher, "_check_new_user", counting_check):
+            ctx1 = dispatcher._build_prompt_context(task, user_name="newbie")
+            ctx2 = dispatcher._build_prompt_context(task, user_name="newbie")
+
+        # Both calls should invoke _check_new_user (True result is not cached).
+        assert call_count["n"] == 2
+        assert ctx1.is_new_user is True
+        assert ctx2.is_new_user is True
+
+
+# ---------------------------------------------------------------------------
+# Fix E: ParsedMessage.files is tuple (immutable)
+# ---------------------------------------------------------------------------
+
+class TestParsedMessageFilesImmutable:
+    """ParsedMessage.files should be a tuple, not a list."""
+
+    def test_files_is_tuple_when_empty(self, tmp_path):
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        result = dispatcher.parse_message("<@UBOT123> hello", "UBOT123")
+        assert isinstance(result.files, tuple)
+        assert result.files == ()
+
+    def test_files_is_tuple_when_provided(self, tmp_path):
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        files = [{"id": "F001", "name": "test.txt"}]
+        result = dispatcher.parse_message("<@UBOT123> hello", "UBOT123", files=files)
+        assert isinstance(result.files, tuple)
+        assert len(result.files) == 1
+        assert result.files[0]["name"] == "test.txt"
+
+    def test_files_not_mutated_after_creation(self, tmp_path):
+        """Attempting to mutate files should raise an error (frozen dataclass + tuple)."""
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        files = [{"id": "F001"}]
+        result = dispatcher.parse_message("<@UBOT123> hello", "UBOT123", files=files)
+        with pytest.raises(AttributeError):
+            result.files += ({"id": "F002"},)  # frozen dataclass prevents assignment

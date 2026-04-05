@@ -52,7 +52,7 @@ class ParsedMessage:
     text: str
     is_admin_command: bool = False
     admin_command: str = ""
-    files: list = field(default_factory=list)
+    files: tuple = ()
 
 
 class Dispatcher:
@@ -102,6 +102,11 @@ class Dispatcher:
         # Exit code: 0 = clean shutdown, non-zero = restart requested.
         self._exit_code: int = 0
 
+        # Cache: memory paths confirmed to belong to existing (non-new) users.
+        # Once _check_new_user returns False for a path, the result is stable
+        # (content only grows), so we skip subsequent file reads.
+        self._known_existing_users: set[str] = set()
+
         # Working directory passed to Claude CLI via --cwd.
         self._workspace_dir = str(opentree_home / "workspace")
 
@@ -125,7 +130,7 @@ class Dispatcher:
         Returns:
             A frozen :class:`ParsedMessage` instance.
         """
-        files = files or []
+        files_tuple = tuple(files) if files else ()
 
         # Strip leading mention (only if it appears at the very start,
         # possibly preceded by whitespace).
@@ -139,10 +144,10 @@ class Dispatcher:
                 text=cleaned,
                 is_admin_command=True,
                 admin_command=lower,
-                files=files,
+                files=files_tuple,
             )
 
-        return ParsedMessage(text=cleaned, files=files)
+        return ParsedMessage(text=cleaned, files=files_tuple)
 
     def dispatch(self, task: Task) -> None:
         """Main dispatch entry point — called for each incoming Slack event.
@@ -591,6 +596,14 @@ class Dispatcher:
         # Workspace: use team_name when available, fall back to "default".
         workspace = self._user_config.team_name or "default"
 
+        # Use cache to avoid repeated file reads for known existing users.
+        if memory_path in self._known_existing_users:
+            is_new = False
+        else:
+            is_new = self._check_new_user(memory_path)
+            if not is_new:
+                self._known_existing_users.add(memory_path)
+
         return PromptContext(
             user_id=task.user_id,
             user_name=name,
@@ -600,7 +613,7 @@ class Dispatcher:
             workspace=workspace,
             team_name=self._user_config.team_name,
             memory_path=memory_path,
-            is_new_user=self._check_new_user(memory_path),
+            is_new_user=is_new,
             is_admin=is_admin,
             thread_participants=tuple(participants),
             opentree_home=str(self._home),

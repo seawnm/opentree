@@ -27,7 +27,11 @@ def prompt_hook(context: dict) -> list[str]:
     participants = context.get("thread_participants", [])
     user_display = context.get("user_display_name", "") or context.get("user_name", "")
     if participants:
-        others = [p for p in participants if p != user_display]
+        others = [
+            p.replace("\n", "").replace("\r", "")[:50]
+            for p in participants
+            if p != user_display
+        ]
         if others:
             parts.append(f"⚠️ 此 thread 有其他參與者：{', '.join(others)}（回覆內容他們也看得到，注意資訊安全）")
 

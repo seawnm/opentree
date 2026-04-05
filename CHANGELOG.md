@@ -14,8 +14,10 @@
 - **PromptContext 擴充** — 新增 `thread_participants`（Thread 參與者列表）和 `opentree_home`（根目錄路徑）欄位，供模組 hook 動態注入
 - **Dispatcher `_check_new_user`** — 新使用者偵測邏輯（memory.md 不存在/空/僅模板時回傳 True），驅動 FTUE 導覽
 - **slack hook: Thread 參與者提醒** — 當 thread 有其他參與者時注入安全提醒，自動排除當前使用者
-- **requirement hook: 訪談上下文偵測** — 掃描 `data/requirements/*/interviews/*.yaml`，匹配 thread_ts 時注入需求訪談上下文（受訪者、階段、題數、觀察筆記）。pyyaml 不可用時 graceful degradation
+- **requirement hook: 訪談上下文偵測** — 掃描 `data/requirements/*/interviews/*.yaml`，匹配 thread_ts 時注入需求訪談上下文（受訪者、階段、題數、觀察筆記）
 - **版本號 single source of truth** — `__version__` 改為 `importlib.metadata.version("opentree")` 動態讀取，fallback 硬編碼；`runner.__version__` 改為 re-export 主套件版本。新增版本一致性測試
+- **`_check_new_user` 快取** — 已確認非新使用者的 memory_path 快取到 `_known_existing_users` set，避免每次請求重複讀檔
+- **pyyaml 主依賴** — `pyyaml>=6.0` 加入 `pyproject.toml` 主依賴，requirement hook 改為直接 import（移除 optional fallback）
 - **README 完整覆寫** — 從 21 行佔位符更新為完整英文文件，涵蓋功能特色、安裝、Quick Start、模組系統、架構、開發指引
 
 ### Changed
@@ -33,6 +35,8 @@
 - **Elapsed time 與 token stats 解耦** — 完成訊息的耗時（`:clock1:`）不再依賴 token 計數才顯示。Claude CLI 未回報 usage 時，耗時仍正常顯示（progress.py line 135 條件修正）
 - **3 個 xfail 升級為 hard pass** — test_long_input_handled、test_multi_turn_context、test_same_thread_maintains_context 在單 instance 環境穩定通過
 - 清理 modules/ 殘留：5 個 `.gitkeep`（rules 已有 .md）、3 個 `__pycache__/`
+- **`ParsedMessage.files` 不可變** — 從 `list`（mutable）改為 `tuple`，對齊 `frozen=True` dataclass 語義
+- **未使用 import 清理** — dispatcher.py（`build_completion_blocks`、`TaskStatus`、`Optional`）、prompt.py（`field`）、requirement hook（`os`、`glob`）
 
 ## [0.4.0] - 2026-04-04
 

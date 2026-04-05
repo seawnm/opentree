@@ -201,7 +201,7 @@ class TestRequirementHook:
 
     def test_matching_thread_returns_context(self, tmp_path) -> None:
         """Returns interview context when thread_ts matches."""
-        _yaml = pytest.importorskip("yaml")
+        import yaml
 
         mod = _import_hook(_REQ_HOOK)
 
@@ -219,7 +219,7 @@ class TestRequirementHook:
         }
         yaml_file = req_dir / "interview-01.yaml"
         yaml_file.write_text(
-            _yaml.dump(interview, allow_unicode=True), encoding="utf-8"
+            yaml.dump(interview, allow_unicode=True), encoding="utf-8"
         )
 
         context = {"opentree_home": str(tmp_path), "thread_ts": "1234.5678"}
@@ -234,7 +234,7 @@ class TestRequirementHook:
 
     def test_no_matching_thread_returns_empty(self, tmp_path) -> None:
         """Returns empty when no thread matches."""
-        _yaml = pytest.importorskip("yaml")
+        import yaml
 
         mod = _import_hook(_REQ_HOOK)
 
@@ -249,7 +249,7 @@ class TestRequirementHook:
         }
         yaml_file = req_dir / "interview-01.yaml"
         yaml_file.write_text(
-            _yaml.dump(interview, allow_unicode=True), encoding="utf-8"
+            yaml.dump(interview, allow_unicode=True), encoding="utf-8"
         )
 
         context = {"opentree_home": str(tmp_path), "thread_ts": "1234.5678"}
@@ -258,8 +258,6 @@ class TestRequirementHook:
 
     def test_corrupt_yaml_returns_empty(self, tmp_path) -> None:
         """Corrupt YAML files don't crash, just return empty."""
-        pytest.importorskip("yaml")
-
         mod = _import_hook(_REQ_HOOK)
 
         req_dir = tmp_path / "data" / "requirements" / "CC-0001" / "interviews"
@@ -273,7 +271,7 @@ class TestRequirementHook:
 
     def test_notes_truncated_at_200_chars(self, tmp_path) -> None:
         """Long notes are truncated to 200 characters."""
-        _yaml = pytest.importorskip("yaml")
+        import yaml
 
         mod = _import_hook(_REQ_HOOK)
 
@@ -290,7 +288,7 @@ class TestRequirementHook:
         }
         yaml_file = req_dir / "interview-01.yaml"
         yaml_file.write_text(
-            _yaml.dump(interview, allow_unicode=True), encoding="utf-8"
+            yaml.dump(interview, allow_unicode=True), encoding="utf-8"
         )
 
         context = {"opentree_home": str(tmp_path), "thread_ts": "5555.6666"}
