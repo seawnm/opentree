@@ -1,6 +1,6 @@
 # OpenTree Roadmap
 
-> 最後更新：2026-04-04
+> 最後更新：2026-04-05
 
 ---
 
@@ -12,6 +12,7 @@
 - [ ] **完整 E2E 全跑一次** — 單 instance + bug fix 後需完成 75 tests 全跑驗證（來自 thread 1775069650）
 - [ ] **完整 E2E 全跑驗證（含 TaskQueue bug fix）** — TaskQueue promotion bug 修復後的回歸測試
 - [x] **opentree init 加入 admin_users 必填設定** — onboard 流程中一併設定管理者（來自 thread 1775069650）— ✅ commit 6c9cf5b (2026-04-04)
+- [x] **onboarding 指令偵測修復** — init 自動偵測 source checkout 並使用 `uv run --directory`（含 quoting）+ 自動安裝 slack-bolt — ✅ commit 570c65c (2026-04-05)
 
 ## 中期
 
@@ -23,5 +24,5 @@
 
 - [ ] **DOGI 遷移評估** — 991 行 CLAUDE.md 遷移至 OpenTree 模組化（來自 thread 1775069650）
 - [ ] **Python -> Go 遷移** — 啟動速度和資源效率（來自 thread 1775069650）
-- [ ] **requirement prompt_hook** — 需求訪談上下文注入，stub 已建立（來自 thread 1775069650）
+- [x] **requirement prompt_hook** — 需求訪談上下文注入，stub 已建立（來自 thread 1775069650）— ✅ commit 570c65c (2026-04-05)
 - [ ] **跨 workspace 模板複用** — 多 workspace 共享模組（來自 thread 1775069650）
