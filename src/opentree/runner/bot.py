@@ -28,14 +28,20 @@ _PLACEHOLDER_PREFIXES = (
 )
 
 
+def _is_placeholder(value: str) -> bool:
+    """Return True if *value* looks like a .env.example placeholder."""
+    return any(value.startswith(prefix) for prefix in _PLACEHOLDER_PREFIXES)
+
+
 def _validate_not_placeholder(value: str, name: str) -> None:
     """Raise RuntimeError if *value* looks like a .env.example placeholder."""
-    for prefix in _PLACEHOLDER_PREFIXES:
-        if value.startswith(prefix):
-            raise RuntimeError(
-                f"{name} appears to be a placeholder (starts with '{prefix}'). "
-                "Update your .env file."
-            )
+    if _is_placeholder(value):
+        for prefix in _PLACEHOLDER_PREFIXES:
+            if value.startswith(prefix):
+                raise RuntimeError(
+                    f"{name} appears to be a placeholder (starts with '{prefix}'). "
+                    "Update your .env file."
+                )
 
 
 class Bot:
@@ -211,6 +217,27 @@ class Bot:
                 tokens.update(self._parse_env_file(local_path))
             if secrets_path.exists():
                 tokens.update(self._parse_env_file(secrets_path))
+
+            # Fallback: if tokens are still placeholders and legacy .env exists,
+            # try loading from legacy .env (handles --force re-init scenario).
+            bot_val = tokens.get("SLACK_BOT_TOKEN", "")
+            app_val = tokens.get("SLACK_APP_TOKEN", "")
+            if (
+                legacy_path.exists()
+                and (_is_placeholder(bot_val) or _is_placeholder(app_val))
+            ):
+                logger.warning(
+                    "Tokens in .env.defaults are placeholders; "
+                    "falling back to legacy config/.env at %s. "
+                    "Run 'opentree init --force' to migrate.",
+                    legacy_path,
+                )
+                legacy_tokens = self._parse_env_file(legacy_path)
+                # Only override placeholder values, preserve real tokens
+                for key in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"):
+                    if _is_placeholder(tokens.get(key, "")) and key in legacy_tokens:
+                        tokens[key] = legacy_tokens[key]
+
         elif legacy_path.exists():
             logger.warning(
                 "Legacy config/.env detected at %s. "

@@ -44,6 +44,46 @@ _PRE_INSTALLED = (
 # Helpers
 # ------------------------------------------------------------------
 
+# Prefixes indicating a .env placeholder (mirrors bot.py _PLACEHOLDER_PREFIXES).
+_PLACEHOLDER_PREFIXES = (
+    "xoxb-your-",
+    "xapp-your-",
+    "your-",
+    "xoxb-xxx",
+    "xapp-xxx",
+)
+
+
+def _env_has_real_tokens(path: Path) -> bool:
+    """Return True if *path* contains at least one non-placeholder token value.
+
+    Reads the file line by line, looking for KEY=VALUE lines where the
+    value does NOT start with any known placeholder prefix.
+    Only checks SLACK_BOT_TOKEN and SLACK_APP_TOKEN.
+    """
+    target_keys = {"SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"}
+    try:
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            # Strip surrounding quotes
+            if len(value) >= 2 and value[0] in ('"', "'") and value[0] == value[-1]:
+                value = value[1:-1]
+            if key not in target_keys:
+                continue
+            if not value:
+                continue
+            is_placeholder = any(value.startswith(p) for p in _PLACEHOLDER_PREFIXES)
+            if not is_placeholder:
+                return True
+    except (OSError, UnicodeDecodeError):
+        return False
+    return False
+
 
 def _resolve_home(home_flag: Optional[str]) -> Path:
     """Resolve OPENTREE_HOME from flag > env > default."""
@@ -56,32 +96,38 @@ def _resolve_home(home_flag: Optional[str]) -> Path:
 
 
 def _bundled_modules_dir() -> Path:
-    """Locate the bundled modules/ directory.
+    """Locate the bundled modules directory.
 
     Search order:
-    1. ``OPENTREE_BUNDLE_DIR`` environment variable
-    2. ``<package_root>/../../../../modules`` (development layout)
-
-    Raises:
-        FileNotFoundError: If no modules directory can be found.
+      1. ``OPENTREE_BUNDLE_DIR`` env var (explicit override)
+      2. Package-relative ``bundled_modules/`` (after pip install)
+      3. Dev layout: 4 levels up → ``modules/`` (source checkout)
     """
     env = os.environ.get("OPENTREE_BUNDLE_DIR")
     if env:
         p = Path(env).resolve()
         if p.is_dir():
             return p
-        msg = f"OPENTREE_BUNDLE_DIR points to a non-directory: {p}"
-        raise FileNotFoundError(msg)
-    # Development layout: src/opentree/cli/init.py -> ../../../../modules
-    pkg_root = Path(__file__).resolve().parent.parent.parent.parent
-    candidate = pkg_root / "modules"
+        raise FileNotFoundError(
+            f"OPENTREE_BUNDLE_DIR={env!r} is not a valid directory."
+        )
+
+    # Installed package: opentree/bundled_modules/
+    pkg_root = Path(__file__).resolve().parent.parent  # opentree/
+    candidate = pkg_root / "bundled_modules"
     if candidate.is_dir():
         return candidate
-    msg = (
+
+    # Dev layout: project_root / modules/
+    dev_root = pkg_root.parent.parent  # project root
+    candidate = dev_root / "modules"
+    if candidate.is_dir():
+        return candidate
+
+    raise FileNotFoundError(
         "Cannot find bundled modules directory. "
-        "Set OPENTREE_BUNDLE_DIR or run from the project root."
+        "Ensure opentree is installed correctly or set OPENTREE_BUNDLE_DIR."
     )
-    raise FileNotFoundError(msg)
 
 
 def _is_interactive() -> bool:
@@ -96,9 +142,10 @@ def _resolve_opentree_cmd(cmd_mode: str = "auto") -> tuple[str, Path | None]:
     """Determine how to invoke opentree in run.sh.
 
     Detection priority (``auto`` mode):
-      1. ``pyproject.toml`` at project root → ``uv run --directory``
-      2. ``shutil.which("opentree")`` — installed on PATH → bare command
-      3. fallback → bare ``opentree``
+      1. ``bundled_modules/`` exists in package → installed → bare command
+      2. ``pyproject.toml`` at project root → ``uv run --directory``
+      3. ``shutil.which("opentree")`` → bare command
+      4. fallback → bare ``opentree``
 
     Explicit modes:
       - ``bare``: always use bare ``opentree`` (assumes installed)
@@ -124,7 +171,16 @@ def _resolve_opentree_cmd(cmd_mode: str = "auto") -> tuple[str, Path | None]:
         typer.echo("  WARNING: --cmd-mode uv-run but no pyproject.toml found; falling back to bare", err=True)
         return "opentree", None
 
-    # cmd_mode == "auto": source checkout takes priority over PATH detection
+    # cmd_mode == "auto": installed package wins over source checkout detection
+    pkg_root = Path(__file__).resolve().parent.parent
+    if (pkg_root / "bundled_modules").is_dir():
+        # Installed package — use bare command
+        resolved = shutil.which("opentree")
+        if resolved:
+            typer.echo(f"  Detected installed opentree: {resolved}")
+        return "opentree", None
+
+    # Dev layout: source checkout takes priority
     if (project_root / "pyproject.toml").is_file():
         return f"uv run --directory {project_root} opentree", project_root
     resolved = shutil.which("opentree")
@@ -383,6 +439,7 @@ def init_command(
         "modules",
         "workspace/.claude/rules",
         "data/memory",
+        "data/logs",
         "config",
     ):
         (opentree_home / subdir).mkdir(parents=True, exist_ok=True)
@@ -588,6 +645,36 @@ def init_command(
         # Auto-install slack dependencies when using uv run mode
         if project_root is not None:
             _ensure_slack_deps(project_root)
+        else:
+            # Installed (bare) mode — warn if slack extras are missing
+            try:
+                import slack_bolt  # noqa: F401
+            except ImportError:
+                typer.echo(
+                    "  \u26a0 Slack extras not installed. "
+                    "Run: pip install 'opentree[slack]'",
+                    err=True,
+                )
+
+    # Migrate legacy config/.env -> config/.env.local (if real tokens present)
+    legacy_env = opentree_home / "config" / ".env"
+    env_local = opentree_home / "config" / ".env.local"
+    if legacy_env.exists() and _env_has_real_tokens(legacy_env):
+        if env_local.exists():
+            typer.echo(
+                "  WARNING: Legacy config/.env contains real tokens, "
+                "but config/.env.local already exists.\n"
+                "  Please manually merge config/.env into config/.env.local, "
+                "then remove config/.env.",
+                err=True,
+            )
+        else:
+            shutil.copy2(legacy_env, env_local)
+            try:
+                env_local.chmod(0o600)
+            except OSError:
+                pass
+            typer.echo("  Migrated config/.env -> config/.env.local")
 
     # Generate config/.env.defaults (bot tokens)
     env_defaults = opentree_home / "config" / ".env.defaults"

@@ -52,7 +52,7 @@ def _make_home(tmp_path: Path, *, bot_token: str = "xoxb-test", app_token: str =
 # Import Bot after stubs are registered
 # ---------------------------------------------------------------------------
 
-from opentree.runner.bot import Bot  # noqa: E402
+from opentree.runner.bot import Bot, _is_placeholder  # noqa: E402
 
 
 # ===========================================================================
@@ -817,3 +817,150 @@ class TestHealthCheck:
         bot._shutdown()
 
         mock_timer.cancel.assert_called_once()
+
+
+# ===========================================================================
+# Fix 3: _is_placeholder and placeholder fallback tests
+# ===========================================================================
+
+
+class TestIsPlaceholder:
+    """Tests for the _is_placeholder() module-level helper."""
+
+    def test_placeholder_detects_xoxb_your(self):
+        assert _is_placeholder("xoxb-your-bot-token") is True
+
+    def test_placeholder_detects_xapp_your(self):
+        assert _is_placeholder("xapp-your-app-token") is True
+
+    def test_placeholder_detects_your_prefix(self):
+        assert _is_placeholder("your-token-here") is True
+
+    def test_placeholder_detects_xoxb_xxx(self):
+        assert _is_placeholder("xoxb-xxx-fake") is True
+
+    def test_placeholder_detects_xapp_xxx(self):
+        assert _is_placeholder("xapp-xxx-fake") is True
+
+    def test_real_token_returns_false(self):
+        assert _is_placeholder("xoxb-1234567890-abcdef") is False
+
+    def test_empty_string_returns_false(self):
+        assert _is_placeholder("") is False
+
+
+class TestLoadTokensPlaceholderFallback:
+    """Tests for placeholder fallback from legacy .env in _load_tokens."""
+
+    def _make_layered_home(
+        self,
+        tmp_path: Path,
+        *,
+        defaults: str | None = None,
+        local: str | None = None,
+        secrets: str | None = None,
+        legacy: str | None = None,
+    ) -> Path:
+        """Create opentree home with specific .env files."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        if defaults is not None:
+            (config_dir / ".env.defaults").write_text(defaults, encoding="utf-8")
+        if local is not None:
+            (config_dir / ".env.local").write_text(local, encoding="utf-8")
+        if secrets is not None:
+            (config_dir / ".env.secrets").write_text(secrets, encoding="utf-8")
+        if legacy is not None:
+            (config_dir / ".env").write_text(legacy, encoding="utf-8")
+        return tmp_path
+
+    def test_load_tokens_fallback_on_placeholder(self, tmp_path):
+        """.env.defaults has placeholder + legacy .env has real token -> fallback."""
+        home = self._make_layered_home(
+            tmp_path,
+            defaults=(
+                "SLACK_BOT_TOKEN=xoxb-your-bot-token\n"
+                "SLACK_APP_TOKEN=xapp-your-app-token\n"
+            ),
+            legacy=(
+                "SLACK_BOT_TOKEN=xoxb-real-from-legacy\n"
+                "SLACK_APP_TOKEN=xapp-real-from-legacy\n"
+            ),
+        )
+        bot = Bot(home)
+        with patch("opentree.runner.bot.logger"):
+            bot_token, app_token = bot._load_tokens()
+        assert bot_token == "xoxb-real-from-legacy"
+        assert app_token == "xapp-real-from-legacy"
+
+    def test_load_tokens_no_fallback_when_real_token(self, tmp_path):
+        """.env.defaults has real token -> no fallback triggered."""
+        home = self._make_layered_home(
+            tmp_path,
+            defaults=(
+                "SLACK_BOT_TOKEN=xoxb-real-default\n"
+                "SLACK_APP_TOKEN=xapp-real-default\n"
+            ),
+            legacy=(
+                "SLACK_BOT_TOKEN=xoxb-legacy-should-not-use\n"
+                "SLACK_APP_TOKEN=xapp-legacy-should-not-use\n"
+            ),
+        )
+        bot = Bot(home)
+        bot_token, app_token = bot._load_tokens()
+        assert bot_token == "xoxb-real-default"
+        assert app_token == "xapp-real-default"
+
+    def test_load_tokens_fallback_partial(self, tmp_path):
+        """Only bot_token is placeholder, app_token is real -> only bot_token falls back."""
+        home = self._make_layered_home(
+            tmp_path,
+            defaults=(
+                "SLACK_BOT_TOKEN=xoxb-your-bot-token\n"
+                "SLACK_APP_TOKEN=xapp-real-default\n"
+            ),
+            legacy=(
+                "SLACK_BOT_TOKEN=xoxb-real-from-legacy\n"
+                "SLACK_APP_TOKEN=xapp-legacy-should-not-use\n"
+            ),
+        )
+        bot = Bot(home)
+        with patch("opentree.runner.bot.logger"):
+            bot_token, app_token = bot._load_tokens()
+        assert bot_token == "xoxb-real-from-legacy"
+        assert app_token == "xapp-real-default"  # not overridden
+
+    def test_load_tokens_no_fallback_when_env_local_overrides(self, tmp_path):
+        """.env.local overrides placeholder -> no fallback needed."""
+        home = self._make_layered_home(
+            tmp_path,
+            defaults=(
+                "SLACK_BOT_TOKEN=xoxb-your-bot-token\n"
+                "SLACK_APP_TOKEN=xapp-your-app-token\n"
+            ),
+            local=(
+                "SLACK_BOT_TOKEN=xoxb-from-local\n"
+                "SLACK_APP_TOKEN=xapp-from-local\n"
+            ),
+            legacy=(
+                "SLACK_BOT_TOKEN=xoxb-legacy-not-used\n"
+                "SLACK_APP_TOKEN=xapp-legacy-not-used\n"
+            ),
+        )
+        bot = Bot(home)
+        bot_token, app_token = bot._load_tokens()
+        assert bot_token == "xoxb-from-local"
+        assert app_token == "xapp-from-local"
+
+    def test_load_tokens_fallback_no_legacy_raises(self, tmp_path):
+        """Placeholder + no legacy .env -> RuntimeError (no fallback source)."""
+        home = self._make_layered_home(
+            tmp_path,
+            defaults=(
+                "SLACK_BOT_TOKEN=xoxb-your-bot-token\n"
+                "SLACK_APP_TOKEN=xapp-your-app-token\n"
+            ),
+        )
+        bot = Bot(home)
+        with pytest.raises(RuntimeError, match="placeholder"):
+            bot._load_tokens()
