@@ -6,15 +6,19 @@ Tests cover:
   - extract_memories: empty / no-match text returns []
   - extract_memories: trivially short matches (<= 3 chars) are skipped
   - extract_memories: source field populated from thread_ts
+  - extract_memories: remember/記住 → pinned category
   - _classify: categories (preference, decision, general)
-  - append_to_memory_file: new file creation with header
-  - append_to_memory_file: append to existing file
+  - append_to_memory_file: new file creation with four-section format
+  - append_to_memory_file: append to existing file (four-section format)
   - append_to_memory_file: empty entries returns 0 and does nothing
   - append_to_memory_file: creates parent directories
+  - append_to_memory_file: old format migration
+  - append_to_memory_file: concurrent safety
   - Integration: full extract + append flow
 """
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -57,6 +61,38 @@ class TestExtractRememberPatterns:
         entries = extract_memories(text)
         assert len(entries) == 1
         assert "每週五" in entries[0].content
+
+
+# ---------------------------------------------------------------------------
+# extract_memories — "remember" → pinned category
+# ---------------------------------------------------------------------------
+
+class TestExtractRememberPinned:
+    """Tests that remember/記住 patterns produce category='pinned'."""
+
+    def test_remember_english_is_pinned(self) -> None:
+        text = "remember that I work at Acme Corp"
+        entries = extract_memories(text)
+        assert len(entries) == 1
+        assert entries[0].category == "pinned"
+
+    def test_remember_chinese_is_pinned(self) -> None:
+        text = "記住我喜歡用 Python 寫程式"
+        entries = extract_memories(text)
+        assert len(entries) == 1
+        assert entries[0].category == "pinned"
+
+    def test_remember_jide_is_pinned(self) -> None:
+        text = "記得我的名字是 Walter"
+        entries = extract_memories(text)
+        assert len(entries) == 1
+        assert entries[0].category == "pinned"
+
+    def test_remember_jixia_is_pinned(self) -> None:
+        text = "記下這件事：每週五要交報告"
+        entries = extract_memories(text)
+        assert len(entries) == 1
+        assert entries[0].category == "pinned"
 
 
 # ---------------------------------------------------------------------------
@@ -195,11 +231,11 @@ class TestClassify:
 
 
 # ---------------------------------------------------------------------------
-# append_to_memory_file — new file
+# append_to_memory_file — new file with four-section format
 # ---------------------------------------------------------------------------
 
 class TestAppendNewFile:
-    """Tests for creating a new memory file."""
+    """Tests for creating a new memory file with four-section format."""
 
     def test_creates_file_with_header(self, tmp_path: Path) -> None:
         mem_path = tmp_path / "memory.md"
@@ -207,17 +243,28 @@ class TestAppendNewFile:
         count = append_to_memory_file(mem_path, [entry])
         assert count == 1
         text = mem_path.read_text(encoding="utf-8")
-        assert text.startswith("# Memories\n")
+        # New format: four-section headers
+        assert "## Pinned" in text
+        assert "## Core" in text
+        assert "## Episodes" in text
+        assert "## Active" in text
         assert "I work at Acme" in text
+
+    def test_creates_file_with_user_name_title(self, tmp_path: Path) -> None:
+        mem_path = tmp_path / "memory.md"
+        entry = MemoryEntry(content="fact", category="general")
+        append_to_memory_file(mem_path, [entry], user_name="Alice")
+        text = mem_path.read_text(encoding="utf-8")
+        assert "Alice" in text
 
     def test_creates_parent_dirs(self, tmp_path: Path) -> None:
         mem_path = tmp_path / "data" / "memory" / "bob" / "memory.md"
-        entry = MemoryEntry(content="some fact", category="fact")
+        entry = MemoryEntry(content="some fact", category="general")
         count = append_to_memory_file(mem_path, [entry])
         assert count == 1
         assert mem_path.exists()
 
-    def test_entry_format_has_category_and_date(self, tmp_path: Path) -> None:
+    def test_entry_format_has_date(self, tmp_path: Path) -> None:
         mem_path = tmp_path / "memory.md"
         entry = MemoryEntry(
             content="dark mode preferred",
@@ -226,38 +273,35 @@ class TestAppendNewFile:
         )
         append_to_memory_file(mem_path, [entry])
         text = mem_path.read_text(encoding="utf-8")
-        assert "[preference]" in text
         assert "dark mode preferred" in text
-        assert "(2026-04-01)" in text
+        # Date should be in the output
+        assert "2026-04" in text
 
 
 # ---------------------------------------------------------------------------
-# append_to_memory_file — existing file
+# append_to_memory_file — existing file (four-section format)
 # ---------------------------------------------------------------------------
 
 class TestAppendExistingFile:
-    """Tests for appending to an existing memory file."""
+    """Tests for appending to an existing four-section memory file."""
 
     def test_append_preserves_existing(self, tmp_path: Path) -> None:
         mem_path = tmp_path / "memory.md"
-        mem_path.write_text("# Memories\n\n- [general] old entry (2026-01-01)\n", encoding="utf-8")
+        mem_path.write_text(
+            "# Test\n\n"
+            "## Pinned\n\n"
+            "## Core\n\n"
+            "## Episodes\n\n"
+            "## Active\n"
+            "- old entry (2026-01-01)\n",
+            encoding="utf-8",
+        )
         entry = MemoryEntry(content="new entry", category="general")
         count = append_to_memory_file(mem_path, [entry])
         assert count == 1
         text = mem_path.read_text(encoding="utf-8")
         assert "old entry" in text
         assert "new entry" in text
-
-    def test_append_adds_newline_if_missing(self, tmp_path: Path) -> None:
-        mem_path = tmp_path / "memory.md"
-        mem_path.write_text("# Memories\n\n- old entry", encoding="utf-8")
-        entry = MemoryEntry(content="new entry", category="general")
-        append_to_memory_file(mem_path, [entry])
-        text = mem_path.read_text(encoding="utf-8")
-        # Should not have two entries on the same line
-        lines = text.strip().split("\n")
-        assert any("new entry" in line for line in lines)
-        assert any("old entry" in line for line in lines)
 
     def test_multiple_entries(self, tmp_path: Path) -> None:
         mem_path = tmp_path / "memory.md"
@@ -270,6 +314,119 @@ class TestAppendExistingFile:
         text = mem_path.read_text(encoding="utf-8")
         assert "fact one" in text
         assert "fact two" in text
+
+    def test_preference_goes_to_core(self, tmp_path: Path) -> None:
+        mem_path = tmp_path / "memory.md"
+        entry = MemoryEntry(content="dark mode preferred", category="preference")
+        append_to_memory_file(mem_path, [entry])
+        text = mem_path.read_text(encoding="utf-8")
+        # Parse to verify it's in Core section
+        from opentree.runner.memory_schema import MemorySchema, Section
+        doc = MemorySchema.parse(text)
+        assert len(doc.sections[Section.CORE]) == 1
+        assert "dark mode" in doc.sections[Section.CORE][0].content
+
+    def test_decision_goes_to_core(self, tmp_path: Path) -> None:
+        mem_path = tmp_path / "memory.md"
+        entry = MemoryEntry(content="chose React", category="decision")
+        append_to_memory_file(mem_path, [entry])
+        text = mem_path.read_text(encoding="utf-8")
+        from opentree.runner.memory_schema import MemorySchema, Section
+        doc = MemorySchema.parse(text)
+        assert len(doc.sections[Section.CORE]) == 1
+
+    def test_general_goes_to_active(self, tmp_path: Path) -> None:
+        mem_path = tmp_path / "memory.md"
+        entry = MemoryEntry(content="general fact", category="general")
+        append_to_memory_file(mem_path, [entry])
+        text = mem_path.read_text(encoding="utf-8")
+        from opentree.runner.memory_schema import MemorySchema, Section
+        doc = MemorySchema.parse(text)
+        assert len(doc.sections[Section.ACTIVE]) == 1
+
+
+# ---------------------------------------------------------------------------
+# append_to_memory_file — pinned category (remember/記住)
+# ---------------------------------------------------------------------------
+
+class TestAppendPinned:
+    """Tests that pinned category entries go to Pinned section."""
+
+    def test_remember_goes_to_pinned(self, tmp_path: Path) -> None:
+        mem_path = tmp_path / "memory.md"
+        entry = MemoryEntry(content="I work at Acme Corp", category="pinned")
+        append_to_memory_file(mem_path, [entry])
+        text = mem_path.read_text(encoding="utf-8")
+        from opentree.runner.memory_schema import MemorySchema, Section
+        doc = MemorySchema.parse(text)
+        assert len(doc.sections[Section.PINNED]) == 1
+        assert "Acme Corp" in doc.sections[Section.PINNED][0].content
+
+
+# ---------------------------------------------------------------------------
+# append_to_memory_file — old format migration
+# ---------------------------------------------------------------------------
+
+class TestMigrationOldFormat:
+    """Tests for migrating old flat format to four-section format."""
+
+    def test_migration_old_format(self, tmp_path: Path) -> None:
+        mem_path = tmp_path / "memory.md"
+        # Old format: flat list with [category] tags, no section headers
+        mem_path.write_text(
+            "# Memories\n\n"
+            "- [general] old entry one (2026-01-01)\n"
+            "- [preference] dark mode preferred (2026-01-02)\n"
+            "- [decision] chose React (2026-01-03)\n",
+            encoding="utf-8",
+        )
+        # Append a new entry which should trigger migration
+        entry = MemoryEntry(content="new fact", category="general")
+        count = append_to_memory_file(mem_path, [entry])
+        assert count == 1
+        text = mem_path.read_text(encoding="utf-8")
+        # After migration, should have four-section format
+        assert "## Pinned" in text
+        assert "## Core" in text
+        assert "## Episodes" in text
+        assert "## Active" in text
+        # Old entries should be migrated
+        assert "old entry one" in text
+        assert "dark mode preferred" in text
+        assert "chose React" in text
+        # New entry should be added
+        assert "new fact" in text
+
+
+# ---------------------------------------------------------------------------
+# append_to_memory_file — concurrent safety
+# ---------------------------------------------------------------------------
+
+class TestConcurrentAppend:
+    """Tests for concurrent append safety with per-user locking."""
+
+    def test_concurrent_append_safe(self, tmp_path: Path) -> None:
+        mem_path = tmp_path / "memory.md"
+        errors: list[Exception] = []
+
+        def worker(i: int) -> None:
+            try:
+                entry = MemoryEntry(content=f"concurrent item {i}", category="general")
+                append_to_memory_file(mem_path, [entry])
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"Errors during concurrent append: {errors}"
+        text = mem_path.read_text(encoding="utf-8")
+        # All 10 items should be present (dedup won't trigger because content differs)
+        for i in range(10):
+            assert f"concurrent item {i}" in text
 
 
 # ---------------------------------------------------------------------------
@@ -311,11 +468,14 @@ class TestIntegration:
         assert len(entries) >= 2
 
         mem_path = tmp_path / "data" / "memory" / "walter" / "memory.md"
-        count = append_to_memory_file(mem_path, entries)
+        count = append_to_memory_file(mem_path, entries, user_name="walter")
         assert count == len(entries)
 
         text = mem_path.read_text(encoding="utf-8")
-        assert "# Memories" in text
+        # Four-section format
+        assert "## Pinned" in text
+        assert "## Core" in text
+        assert "## Active" in text
         assert "Asia/Taipei" in text
         assert "uv" in text
 

@@ -26,6 +26,7 @@ _KNOWN_PLACEHOLDERS = frozenset({
     "{{team_name}}",
     "{{admin_channel}}",
     "{{admin_description}}",
+    "{{owner_description}}",
     "{{opentree_home}}",
 })
 

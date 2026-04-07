@@ -105,7 +105,7 @@ class TestPromptContext:
         assert d["user_name"] == "alice"
         assert d["is_new_user"] is True
         assert isinstance(d, dict)
-        # All keys present
+        # All keys present (is_owner primary + is_admin backward compat alias)
         expected_keys = {
             "user_id",
             "user_name",
@@ -116,6 +116,7 @@ class TestPromptContext:
             "team_name",
             "memory_path",
             "is_new_user",
+            "is_owner",
             "is_admin",
             "thread_participants",
             "opentree_home",
@@ -539,22 +540,22 @@ class TestBuildChannelBlock:
 class TestIdentityBlockAdmin:
     """build_identity_block outputs admin status."""
 
-    def test_admin_user_shows_admin(self) -> None:
+    def test_owner_user_shows_owner(self) -> None:
         from opentree.core.prompt import PromptContext, build_identity_block
         ctx = PromptContext(
             user_display_name="Walter",
             user_id="U0TEST",
-            is_admin=True,
+            is_owner=True,
         )
         lines = build_identity_block(ctx)
-        assert any("Admin" in l for l in lines)
+        assert any("Owner" in l for l in lines)
 
     def test_regular_user_shows_regular(self) -> None:
         from opentree.core.prompt import PromptContext, build_identity_block
         ctx = PromptContext(
             user_display_name="Alice",
             user_id="U0ALICE",
-            is_admin=False,
+            is_owner=False,
         )
         lines = build_identity_block(ctx)
         assert any("一般使用者" in l for l in lines)

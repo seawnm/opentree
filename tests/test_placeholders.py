@@ -16,7 +16,7 @@ def _make_config(**overrides: str) -> UserConfig:
         "bot_name": "TestBot",
         "team_name": "TestTeam",
         "admin_channel": "C999",
-        "admin_description": "Admin desc",
+        "owner_description": "Admin desc",
         "opentree_home": "/opt/opentree",
     }
     defaults.update(overrides)
@@ -33,9 +33,10 @@ class TestReplacementsMap:
         assert "{{bot_name}}" in keys
         assert "{{team_name}}" in keys
         assert "{{admin_channel}}" in keys
-        assert "{{admin_description}}" in keys
+        assert "{{owner_description}}" in keys
+        assert "{{admin_description}}" in keys  # backward compat alias
         assert "{{opentree_home}}" in keys
-        assert len(keys) == 5
+        assert len(keys) == 6
 
 
 class TestResolveContentReplacesBotName:
@@ -341,19 +342,19 @@ class TestUnknownDoubleBraceLeftIntact:
         engine = PlaceholderEngine(
             _make_config(
                 bot_name="DOGI",
-                admin_description="Use {{bot_name}} in templates",
+                owner_description="Use {{bot_name}} in templates",
             )
         )
-        # Force admin_description to be resolved BEFORE bot_name by
-        # rebuilding the dict with admin_description first.
+        # Force owner_description to be resolved BEFORE bot_name by
+        # rebuilding the dict with owner_description first.
         reordered = {}
-        reordered["{{admin_description}}"] = engine._replacements["{{admin_description}}"]
+        reordered["{{owner_description}}"] = engine._replacements["{{owner_description}}"]
         for k, v in engine._replacements.items():
-            if k != "{{admin_description}}":
+            if k != "{{owner_description}}":
                 reordered[k] = v
         engine._replacements = reordered
 
-        content = "Desc: {{admin_description}}"
+        content = "Desc: {{owner_description}}"
         result = engine.resolve_content(content)
         # Must NOT produce "Desc: Use DOGI in templates" (double-replacement).
         assert result == "Desc: Use {{bot_name}} in templates"

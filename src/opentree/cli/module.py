@@ -8,6 +8,7 @@ ManifestValidator, SymlinkManager, SettingsGenerator, ClaudeMdGenerator).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -28,6 +29,8 @@ from opentree.registry.registry import Registry
 module_app = typer.Typer(no_args_is_help=True)
 
 _VALID_MODULE_NAME = re.compile(r'^[a-z]([a-z0-9-]*[a-z0-9])?$')
+
+logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------
@@ -95,12 +98,24 @@ def _find_reverse_deps(
 
 
 def _regenerate_claude_md(home: Path, registry_data) -> None:
-    """Regenerate workspace/CLAUDE.md from current registry."""
+    """Regenerate workspace/CLAUDE.md from current registry, preserving owner content."""
     config = load_user_config(home)
     gen = ClaudeMdGenerator()
-    content = gen.generate(home, registry_data, config)
     claude_md_path = home / "workspace" / "CLAUDE.md"
     claude_md_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Read existing content (if any) for preservation
+    existing = None
+    if claude_md_path.exists():
+        try:
+            existing = claude_md_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning(
+                "Cannot read existing CLAUDE.md (%s), owner content will not be preserved",
+                exc,
+            )
+
+    content = gen.generate_with_preservation(existing, home, registry_data, config)
     claude_md_path.write_text(content, encoding="utf-8")
 
 

@@ -15,6 +15,7 @@ from opentree.registry.registry import Registry
 from opentree.runner.circuit_breaker import CircuitBreaker
 from opentree.runner.claude_process import ClaudeProcess, ClaudeResult
 from opentree.runner.config import RunnerConfig, load_runner_config
+from opentree.runner.reset import reset_bot, reset_bot_all
 from opentree.runner.retry import RetryConfig, classify_error, should_retry
 from opentree.runner.file_handler import build_file_context, cleanup_temp, download_files
 from opentree.runner.progress import ProgressReporter
@@ -30,7 +31,9 @@ logger = logging.getLogger(__name__)
 # Bot commands recognised by the dispatcher.
 # "status" and "help" are public (available to all users).
 # "shutdown" requires admin authorization (see RunnerConfig.admin_users).
-_BOT_COMMANDS: frozenset[str] = frozenset({"status", "help", "shutdown", "restart"})
+_BOT_COMMANDS: frozenset[str] = frozenset({
+    "status", "help", "shutdown", "restart", "reset-bot", "reset-bot-all"
+})
 
 # Matches a leading Slack user mention: <@UXXXXXXX>
 _MENTION_RE = re.compile(r"^<@[A-Z0-9]+>")
@@ -38,10 +41,12 @@ _MENTION_RE = re.compile(r"^<@[A-Z0-9]+>")
 # Help text shown in response to the "help" bot command.
 _HELP_TEXT = (
     "Available commands:\n"
-    "  *status*   — show bot status and queue stats\n"
-    "  *help*     — show this help message\n"
-    "  *restart*  — restart the bot (admin only)\n"
-    "  *shutdown* — gracefully stop the bot (admin only)\n"
+    "  *status*        — show bot status and queue stats\n"
+    "  *help*          — show this help message\n"
+    "  *restart*       — restart the bot (Owner only)\n"
+    "  *shutdown*      — gracefully stop the bot (Owner only)\n"
+    "  *reset-bot*     — soft reset: regenerate config, clear sessions (Owner only)\n"
+    "  *reset-bot-all* — hard reset: clear all data and customizations (Owner only)\n"
 )
 
 
@@ -425,7 +430,7 @@ class Dispatcher:
                 self._session_mgr.set_session_id(task.thread_ts, result.session_id)
 
             # Step 11b: extract and persist memories from the response.
-            if result.response_text:
+            if result.response_text and self._runner_config.memory_extraction_enabled:
                 try:
                     from opentree.runner.memory_extractor import (
                         append_to_memory_file,
@@ -441,7 +446,7 @@ class Dispatcher:
                         memory_path = (
                             self._home / "data" / "memory" / resolved_name / "memory.md"
                         )
-                        append_to_memory_file(memory_path, memories)
+                        append_to_memory_file(memory_path, memories, user_name=resolved_name)
                 except Exception as exc:
                     logger.warning("Memory extraction failed: %s", exc)
 
@@ -582,8 +587,8 @@ class Dispatcher:
         memory_path = str(
             self._home / "data" / "memory" / name / "memory.md"
         )
-        # Determine admin status from runner config.
-        is_admin = bool(
+        # Determine owner status from runner config.
+        is_owner = bool(
             self._runner_config.admin_users
             and task.user_id in self._runner_config.admin_users
         )
@@ -614,7 +619,7 @@ class Dispatcher:
             team_name=self._user_config.team_name,
             memory_path=memory_path,
             is_new_user=is_new,
-            is_admin=is_admin,
+            is_owner=is_owner,
             thread_participants=tuple(participants),
             opentree_home=str(self._home),
         )
@@ -634,7 +639,7 @@ class Dispatcher:
             self._handle_status(task)
         elif command == "help":
             self._handle_help(task)
-        elif command in ("shutdown", "restart"):
+        elif command in ("shutdown", "restart", "reset-bot", "reset-bot-all"):
             if (
                 self._runner_config.admin_users
                 and task.user_id not in self._runner_config.admin_users
@@ -647,8 +652,12 @@ class Dispatcher:
                 return
             if command == "restart":
                 self._handle_restart(task)
-            else:
+            elif command == "shutdown":
                 self._handle_shutdown(task)
+            elif command == "reset-bot":
+                self._handle_reset_bot(task)
+            elif command == "reset-bot-all":
+                self._handle_reset_bot_all(task)
         else:
             logger.warning("Unknown admin command: %s", command)
 
@@ -718,6 +727,89 @@ class Dispatcher:
             ":arrows_counterclockwise: Restarting...",
             thread_ts=task.thread_ts,
         )
+        self._shutdown.set()
+
+    def _handle_reset_bot(self, task: Task) -> None:
+        """Soft reset: regenerate settings/symlinks/CLAUDE.md, clear sessions.
+
+        Calls :func:`~opentree.runner.reset.reset_bot` and then
+        :meth:`SessionManager.clear_all`.  Always triggers a restart
+        afterwards (even on failure, since state may be partial).
+
+        Args:
+            task: The task for routing the reply.
+        """
+        self._slack.send_message(
+            task.channel_id,
+            ":arrows_counterclockwise: Resetting bot configuration...",
+            thread_ts=task.thread_ts,
+        )
+
+        try:
+            actions = reset_bot(self._home)
+            self._session_mgr.clear_all()
+            actions.append("Cleared sessions")
+
+            summary = "\n".join(f"\u2022 {a}" for a in actions)
+            self._slack.send_message(
+                task.channel_id,
+                f":white_check_mark: Reset complete. Restarting...\n{summary}",
+                thread_ts=task.thread_ts,
+            )
+        except Exception as exc:
+            logger.error("Reset failed: %s", exc, exc_info=True)
+            self._slack.send_message(
+                task.channel_id,
+                f":x: Reset failed: {exc}",
+                thread_ts=task.thread_ts,
+            )
+
+        # Trigger restart
+        self._exit_code = 1
+        self._shutdown.set()
+
+    def _handle_reset_bot_all(self, task: Task) -> None:
+        """Hard reset: clear all data and customizations.
+
+        Clears in-memory sessions first (before ``reset_bot_all`` may
+        wipe ``data/``), then calls
+        :func:`~opentree.runner.reset.reset_bot_all`.  Always triggers a
+        restart afterwards (even on failure, since state may be partial).
+
+        Args:
+            task: The task for routing the reply.
+        """
+        self._slack.send_message(
+            task.channel_id,
+            ":warning: Performing full reset. All memories, sessions, "
+            "and custom configurations will be cleared. "
+            "Bot will restart with default settings...",
+            thread_ts=task.thread_ts,
+        )
+
+        try:
+            # Clear in-memory sessions first (before data/ cleanup)
+            self._session_mgr.clear_all()
+
+            actions = reset_bot_all(self._home)
+            actions.insert(0, "Cleared sessions")
+
+            summary = "\n".join(f"\u2022 {a}" for a in actions)
+            self._slack.send_message(
+                task.channel_id,
+                f":white_check_mark: Full reset complete. Restarting...\n{summary}",
+                thread_ts=task.thread_ts,
+            )
+        except Exception as exc:
+            logger.error("Full reset failed: %s", exc, exc_info=True)
+            self._slack.send_message(
+                task.channel_id,
+                f":x: Full reset failed: {exc}",
+                thread_ts=task.thread_ts,
+            )
+
+        # Always trigger restart (even on failure, state may be partial)
+        self._exit_code = 1
         self._shutdown.set()
 
     # ------------------------------------------------------------------

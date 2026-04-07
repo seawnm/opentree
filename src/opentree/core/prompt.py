@@ -125,7 +125,7 @@ class PromptContext:
     team_name: str = ""
     memory_path: str = ""
     is_new_user: bool = False
-    is_admin: bool = False
+    is_owner: bool = False
     thread_participants: tuple[str, ...] = ()
     opentree_home: str = ""
 
@@ -141,7 +141,8 @@ class PromptContext:
             "team_name": self.team_name,
             "memory_path": self.memory_path,
             "is_new_user": self.is_new_user,
-            "is_admin": self.is_admin,
+            "is_owner": self.is_owner,
+            "is_admin": self.is_owner,  # backward compat alias
             "thread_participants": list(self.thread_participants),
             "opentree_home": self.opentree_home,
         }
@@ -191,8 +192,8 @@ def build_identity_block(context: PromptContext) -> list[str]:
             parts.append(f"使用者：{context.user_display_name}")
     if context.user_id:
         parts.append(f"使用者 ID：{context.user_id}")
-    if context.is_admin:
-        parts.append("權限等級：Admin")
+    if context.is_owner:
+        parts.append("權限等級：Owner")
     else:
         parts.append("權限等級：一般使用者")
     if context.memory_path:

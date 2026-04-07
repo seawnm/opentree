@@ -11,11 +11,18 @@ even on Windows, for consistent display.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 from opentree.core.config import UserConfig
 from opentree.registry.models import RegistryData
+
+logger = logging.getLogger(__name__)
+
+_AUTO_BEGIN = "<!-- OPENTREE:AUTO:BEGIN -->"
+_AUTO_END = "<!-- OPENTREE:AUTO:END -->"
+_OWNER_HINT = "\n<!-- 以下為 Owner 自訂區塊，module 安裝/更新/refresh 不會覆蓋 -->\n"
 
 
 @dataclass(frozen=True)
@@ -38,8 +45,11 @@ class ClaudeMdGenerator:
     Usage::
 
         gen = ClaudeMdGenerator()
-        content = gen.generate(opentree_home, registry, config)
-        (opentree_home / "workspace" / "CLAUDE.md").write_text(content)
+        # For new files, always wrap with markers:
+        content = gen.wrap_with_markers(gen.generate(home, registry, config))
+        # For re-generation preserving owner content:
+        content = gen.generate_with_preservation(existing, home, registry, config)
+        (home / "workspace" / "CLAUDE.md").write_text(content)
     """
 
     def generate(
@@ -77,6 +87,71 @@ class ClaudeMdGenerator:
 
         content = "\n".join(sections) + "\n"
         return self._substitute_placeholders(content, config)
+
+    # ------------------------------------------------------------------
+    # Marker wrapping and preservation
+    # ------------------------------------------------------------------
+
+    def wrap_with_markers(self, content: str) -> str:
+        """Wrap generated content with AUTO markers and owner hint.
+
+        Args:
+            content: The raw output from ``generate()``.
+
+        Returns:
+            Content wrapped with BEGIN/END markers and an owner hint.
+        """
+        return f"{_AUTO_BEGIN}\n{content}\n{_AUTO_END}\n{_OWNER_HINT}"
+
+    def generate_with_preservation(
+        self,
+        existing_content: str | None,
+        home: Path,
+        registry: RegistryData,
+        config: UserConfig,
+    ) -> str:
+        """Generate CLAUDE.md while preserving owner-written content.
+
+        Args:
+            existing_content: Current CLAUDE.md text, or None for a new file.
+            home: Root directory of the OpenTree installation.
+            registry: Current registry state.
+            config: User-level configuration.
+
+        Returns:
+            The merged CLAUDE.md content.
+        """
+        auto_content = self.wrap_with_markers(
+            self.generate(home, registry, config)
+        )
+
+        if existing_content is None:
+            return auto_content
+
+        begin_idx = existing_content.find(_AUTO_BEGIN)
+        # Find the END marker that follows the BEGIN marker
+        # (not one embedded in owner content)
+        if begin_idx != -1:
+            end_idx = existing_content.find(_AUTO_END, begin_idx)
+        else:
+            end_idx = -1
+
+        if begin_idx == -1 or end_idx == -1:
+            # Missing marker(s) (legacy migration) — entire old file is owner content
+            logger.warning(
+                "CLAUDE.md has no AUTO markers, treating entire content as owner content"
+            )
+            return auto_content + "\n" + existing_content
+
+        # Extract everything after the END marker
+        owner_content = existing_content[end_idx + len(_AUTO_END) :]
+        # Remove owner hint to avoid duplication
+        owner_content = owner_content.replace(_OWNER_HINT, "")
+
+        if owner_content.strip():
+            return auto_content + "\n" + owner_content
+        else:
+            return auto_content
 
     # ------------------------------------------------------------------
     # Module info extraction

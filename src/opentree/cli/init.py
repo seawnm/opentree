@@ -209,9 +209,10 @@ def _backup_state(opentree_home: Path) -> Path | None:
     reg_path = opentree_home / "config" / "registry.json"
     perm_path = opentree_home / "config" / "permissions.json"
     settings_path = opentree_home / "workspace" / ".claude" / "settings.json"
+    claude_md_path = opentree_home / "workspace" / "CLAUDE.md"
     rules_dir = opentree_home / "workspace" / ".claude" / "rules"
 
-    for src in (reg_path, perm_path, settings_path):
+    for src in (reg_path, perm_path, settings_path, claude_md_path):
         if src.exists():
             dest = backup_dir / src.relative_to(opentree_home)
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -272,13 +273,21 @@ def init_command(
         str,
         typer.Option("--bot-name", help="Bot display name (required)"),
     ] = ...,
+    owner: Annotated[
+        Optional[str],
+        typer.Option(
+            "--owner",
+            help="Comma-separated owner Slack User IDs (required, e.g. U123,U456)",
+        ),
+    ] = None,
     admin_users: Annotated[
-        str,
+        Optional[str],
         typer.Option(
             "--admin-users",
-            help="Comma-separated admin Slack User IDs (required, e.g. U123,U456)",
+            help="(deprecated, use --owner) Comma-separated owner Slack User IDs",
+            hidden=True,
         ),
-    ] = ...,
+    ] = None,
     home: Annotated[
         Optional[str],
         typer.Option("--home", help="Path to OPENTREE_HOME"),
@@ -297,6 +306,15 @@ def init_command(
     ] = None,
 ) -> None:
     """Initialize an OpenTree home directory with bundled modules."""
+    # Resolve --owner vs --admin-users (backward compat alias).
+    owner_value = owner or admin_users
+    if not owner_value:
+        typer.echo(
+            "Error: Missing option '--owner' (or deprecated '--admin-users').",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
     opentree_home = _resolve_home(home)
     reg_path = opentree_home / "config" / "registry.json"
 
@@ -323,7 +341,7 @@ def init_command(
         "bot_name": bot_name,
         "team_name": team_name or "",
         "admin_channel": "",  # deprecated: kept for backward compat
-        "admin_description": "",
+        "owner_description": "",
     }
     (opentree_home / "config" / "user.json").write_text(
         json.dumps(user_config_data, indent=2, ensure_ascii=False) + "\n",
@@ -331,7 +349,7 @@ def init_command(
     )
 
     # 2b. Write config/runner.json (admin_users)
-    parsed_admin = _parse_admin_users(admin_users)
+    parsed_admin = _parse_admin_users(owner_value)
     runner_json_path = opentree_home / "config" / "runner.json"
     runner_data: dict = {}
     if runner_json_path.exists():
@@ -449,10 +467,23 @@ def init_command(
             settings_gen.write_settings()
             Registry.save(reg_path, reg_data)
 
-            # Generate CLAUDE.md
+            # Generate CLAUDE.md (with marker preservation on --force re-init)
             gen = ClaudeMdGenerator()
-            content = gen.generate(opentree_home, reg_data, config)
             claude_md = opentree_home / "workspace" / "CLAUDE.md"
+            existing = None
+            if force and claude_md.exists():
+                try:
+                    existing = claude_md.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    pass
+            if existing is not None:
+                content = gen.generate_with_preservation(
+                    existing, opentree_home, reg_data, config
+                )
+            else:
+                content = gen.wrap_with_markers(
+                    gen.generate(opentree_home, reg_data, config)
+                )
             claude_md.write_text(content, encoding="utf-8")
 
     except typer.Exit:
@@ -477,7 +508,7 @@ def init_command(
         if backup_dir and backup_dir.exists():
             shutil.rmtree(backup_dir, ignore_errors=True)
 
-    # 6. Generate bin/run.sh and config/.env.example
+    # 6. Generate bin/run.sh and config/.env.defaults + .env.local.example
     bin_dir = opentree_home / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
 
@@ -497,22 +528,54 @@ def init_command(
         if project_root is not None:
             _ensure_slack_deps(project_root)
 
-    env_example = opentree_home / "config" / ".env.example"
-    if not env_example.exists():
-        env_example.write_text(
-            "# OpenTree Bot Configuration\n"
-            "# Copy this file to .env and fill in the values\n"
+    # Generate config/.env.defaults (bot tokens)
+    env_defaults = opentree_home / "config" / ".env.defaults"
+    if not env_defaults.exists() or force:
+        env_defaults.write_text(
+            "# OpenTree Bot Configuration — Default Tokens\n"
+            "# This file contains bot-level secrets.\n"
+            "# Owner should NOT edit this file directly.\n"
+            "#\n"
             "SLACK_BOT_TOKEN=xoxb-your-bot-token\n"
             "SLACK_APP_TOKEN=xapp-your-app-token\n",
             encoding="utf-8",
         )
-        typer.echo(f"  Created {env_example}")
+        # Set restrictive permissions (owner-only read/write)
+        try:
+            env_defaults.chmod(0o600)
+        except OSError:
+            pass  # Windows or restricted environments
+        typer.echo("  Created config/.env.defaults")
+
+    # Generate config/.env.local.example (owner customization template)
+    env_local_example = opentree_home / "config" / ".env.local.example"
+    if not env_local_example.exists() or force:
+        env_local_example.write_text(
+            "# Owner Customization\n"
+            "# Copy this file to .env.local and add your own keys.\n"
+            "# Keys here override values in .env.defaults.\n"
+            "#\n"
+            "# Example:\n"
+            "# OPENAI_API_KEY=sk-your-key-here\n"
+            "#\n"
+            "# To override Slack tokens:\n"
+            "# SLACK_BOT_TOKEN=xoxb-your-custom-token\n",
+            encoding="utf-8",
+        )
+        typer.echo("  Created config/.env.local.example")
+
+    # Clean up legacy .env.example on --force
+    if force:
+        legacy_example = opentree_home / "config" / ".env.example"
+        if legacy_example.exists():
+            legacy_example.unlink()
+            typer.echo("  Removed legacy config/.env.example")
 
     # 7. Success summary
     installed = ", ".join(_PRE_INSTALLED)
     typer.echo(f"Initialized OpenTree at {opentree_home}")
     typer.echo(f"  Bot name: {bot_name}")
-    typer.echo(f"  Admin users: {', '.join(parsed_admin)}")
+    typer.echo(f"  Owner: {', '.join(parsed_admin)}")
     typer.echo(f"  Pre-installed modules: {installed}")
     typer.echo(f"  Workspace: {opentree_home / 'workspace'}")
     typer.echo("Run 'opentree start' to launch.")

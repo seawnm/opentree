@@ -315,6 +315,7 @@ class TestRunnerConfigDirectInstantiation:
         assert "session_expiry_days" in fields
         assert "drain_timeout" in fields
         assert "admin_users" in fields
+        assert "memory_extraction_enabled" in fields
 
 
 class TestAdminUsers:
@@ -363,3 +364,61 @@ class TestAdminUsers:
         result = load_runner_config(tmp_path)
 
         assert result.admin_users == ()
+
+
+class TestMemoryExtractionEnabled:
+    """Tests for memory_extraction_enabled field on RunnerConfig."""
+
+    def test_default_true(self, tmp_path: Path) -> None:
+        """Default memory_extraction_enabled is True when no config file exists."""
+        result = load_runner_config(tmp_path)
+        assert result.memory_extraction_enabled is True
+
+    def test_from_json_false(self, tmp_path: Path) -> None:
+        """memory_extraction_enabled=false in JSON results in False."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "runner.json").write_text(
+            json.dumps({"memory_extraction_enabled": False}),
+            encoding="utf-8",
+        )
+
+        result = load_runner_config(tmp_path)
+
+        assert result.memory_extraction_enabled is False
+
+    def test_from_json_true(self, tmp_path: Path) -> None:
+        """memory_extraction_enabled=true in JSON results in True."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "runner.json").write_text(
+            json.dumps({"memory_extraction_enabled": True}),
+            encoding="utf-8",
+        )
+
+        result = load_runner_config(tmp_path)
+
+        assert result.memory_extraction_enabled is True
+
+    def test_missing_from_json_defaults_true(self, tmp_path: Path) -> None:
+        """When memory_extraction_enabled is not in JSON, defaults to True."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "runner.json").write_text(
+            json.dumps({"task_timeout": 600}),
+            encoding="utf-8",
+        )
+
+        result = load_runner_config(tmp_path)
+
+        assert result.memory_extraction_enabled is True
+
+    def test_direct_instantiation_default(self) -> None:
+        """Direct instantiation defaults to True."""
+        config = RunnerConfig()
+        assert config.memory_extraction_enabled is True
+
+    def test_direct_instantiation_false(self) -> None:
+        """Direct instantiation with memory_extraction_enabled=False."""
+        config = RunnerConfig(memory_extraction_enabled=False)
+        assert config.memory_extraction_enabled is False

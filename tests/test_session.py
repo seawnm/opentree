@@ -350,3 +350,72 @@ class TestSessionInfo:
         assert info.session_id == "abc"
         assert info.created_at == "2026-01-01T00:00:00"
         assert info.last_used_at == "2026-01-02T12:00:00"
+
+
+# ---------------------------------------------------------------------------
+# test_clear_all
+# ---------------------------------------------------------------------------
+
+class TestClearAll:
+    def test_clears_in_memory_sessions(self, manager: SessionManager):
+        manager.set_session_id("ts-a", "ses-a")
+        manager.set_session_id("ts-b", "ses-b")
+
+        manager.clear_all()
+
+        assert manager.get_session_id("ts-a") is None
+        assert manager.get_session_id("ts-b") is None
+        assert len(manager._sessions) == 0
+
+    def test_clears_on_disk_sessions(self, data_dir: Path):
+        mgr = SessionManager(data_dir)
+        mgr.set_session_id("ts-persist", "ses-persist")
+
+        mgr.clear_all()
+
+        # Reload from disk — should be empty
+        mgr2 = SessionManager(data_dir)
+        assert mgr2.get_session_id("ts-persist") is None
+        assert len(mgr2._sessions) == 0
+
+    def test_disk_file_exists_after_clear(self, data_dir: Path):
+        """After clear_all, sessions.json should exist but contain empty dict."""
+        mgr = SessionManager(data_dir)
+        mgr.set_session_id("ts-x", "ses-x")
+        mgr.clear_all()
+
+        content = json.loads(
+            (data_dir / "sessions.json").read_text(encoding="utf-8")
+        )
+        assert content == {}
+
+    def test_clear_all_on_empty_is_noop(self, manager: SessionManager):
+        """Clearing an already-empty manager should not raise."""
+        manager.clear_all()
+        assert len(manager._sessions) == 0
+
+    def test_thread_safe(self, data_dir: Path):
+        """Concurrent clear_all + set_session_id should not corrupt data."""
+        mgr = SessionManager(data_dir)
+        errors: list[Exception] = []
+
+        def writer(idx: int) -> None:
+            try:
+                mgr.set_session_id(f"ts-{idx}", f"ses-{idx}")
+            except Exception as e:
+                errors.append(e)
+
+        def clearer() -> None:
+            try:
+                mgr.clear_all()
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=writer, args=(i,)) for i in range(5)]
+        threads.append(threading.Thread(target=clearer))
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []

@@ -23,7 +23,6 @@
   },
   "prompt_hook": null,
   "placeholders": {
-    "bot_name": "required",
-    "admin_description": "optional"
+    "bot_name": "required"
   }
 }

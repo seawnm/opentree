@@ -94,6 +94,7 @@ def opentree_home(tmp_path: Path) -> Path:
         "bot_name": "Groot",
         "team_name": "AI Team",
         "admin_channel": "C1234",
+        # Uses legacy "admin_description" key to test backward-compat fallback
         "admin_description": "管理團隊",
     }
     (config_dir / "user.json").write_text(

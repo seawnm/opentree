@@ -30,6 +30,9 @@ class RunnerConfig:
         admin_users: Slack user IDs allowed to run admin commands like
             ``shutdown``.  Empty tuple means all users are admins
             (backward-compatible default).
+        memory_extraction_enabled: Whether to extract and persist user
+            memories from conversation responses.  When False, Step 11b
+            (memory extraction) is skipped entirely.
     """
 
     progress_interval: int = 10
@@ -40,6 +43,7 @@ class RunnerConfig:
     session_expiry_days: int = 180
     drain_timeout: int = 30
     admin_users: tuple[str, ...] = ()
+    memory_extraction_enabled: bool = True
 
 
 def _validate(data: dict) -> None:
@@ -120,4 +124,5 @@ def load_runner_config(opentree_home: Path) -> RunnerConfig:
         session_expiry_days=data.get("session_expiry_days", 180),
         drain_timeout=data.get("drain_timeout", 30),
         admin_users=tuple(data.get("admin_users", ())),
+        memory_extraction_enabled=data.get("memory_extraction_enabled", True),
     )

@@ -21,8 +21,6 @@
   },
   "prompt_hook": null,
   "placeholders": {
-    "bot_name": "required",
-    "team_name": "optional",
-    "admin_description": "optional"
+    "bot_name": "required"
   }
 }

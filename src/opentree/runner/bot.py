@@ -158,26 +158,15 @@ class Bot:
     # Private: token loading
     # ------------------------------------------------------------------
 
-    def _load_tokens(self) -> tuple[str, str]:
-        """Load SLACK_BOT_TOKEN and SLACK_APP_TOKEN from .env file.
+    @staticmethod
+    def _parse_env_file(path: Path) -> dict[str, str]:
+        """Parse a .env file into a dict of key-value pairs.
 
-        Reads from $OPENTREE_HOME/config/.env
         Format: KEY=VALUE (one per line, # comments, empty lines ok)
         Quoted values (single or double quotes) are stripped.
-
-        Raises:
-            RuntimeError: If the .env file is missing or required tokens
-                are absent.
         """
-        env_path = self._home / "config" / ".env"
-        if not env_path.exists():
-            raise RuntimeError(
-                f".env file not found at {env_path}. "
-                "Create config/.env with SLACK_BOT_TOKEN and SLACK_APP_TOKEN."
-            )
-
         tokens: dict[str, str] = {}
-        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -190,17 +179,66 @@ class Bot:
             if len(value) >= 2 and value[0] in ('"', "'") and value[0] == value[-1]:
                 value = value[1:-1]
             tokens[key] = value
+        return tokens
+
+    def _load_tokens(self) -> tuple[str, str]:
+        """Load SLACK_BOT_TOKEN and SLACK_APP_TOKEN from layered .env files.
+
+        Three-layer merge (highest priority last):
+        1. config/.env.defaults — bot-level defaults
+        2. config/.env.local   — owner customization / overrides
+        3. config/.env.secrets — deployment secrets (highest priority)
+
+        Fallback: if only config/.env exists (legacy), use it with a WARNING.
+
+        Raises:
+            RuntimeError: If no .env file is found or required tokens
+                are absent.
+        """
+        config_dir = self._home / "config"
+        defaults_path = config_dir / ".env.defaults"
+        local_path = config_dir / ".env.local"
+        secrets_path = config_dir / ".env.secrets"
+        legacy_path = config_dir / ".env"
+
+        tokens: dict[str, str] = {}
+        loaded_any = False
+
+        if defaults_path.exists():
+            tokens.update(self._parse_env_file(defaults_path))
+            loaded_any = True
+            if local_path.exists():
+                tokens.update(self._parse_env_file(local_path))
+            if secrets_path.exists():
+                tokens.update(self._parse_env_file(secrets_path))
+        elif legacy_path.exists():
+            logger.warning(
+                "Legacy config/.env detected at %s. "
+                "Consider migrating to .env.defaults + .env.local.",
+                legacy_path,
+            )
+            tokens.update(self._parse_env_file(legacy_path))
+            loaded_any = True
+
+        if not loaded_any:
+            raise RuntimeError(
+                "No .env file found. "
+                "Create config/.env.defaults (or config/.env for legacy mode) "
+                "with SLACK_BOT_TOKEN and SLACK_APP_TOKEN."
+            )
 
         bot_token = tokens.get("SLACK_BOT_TOKEN", "")
         app_token = tokens.get("SLACK_APP_TOKEN", "")
 
         if not bot_token:
             raise RuntimeError(
-                "SLACK_BOT_TOKEN is missing from config/.env"
+                "SLACK_BOT_TOKEN is missing. "
+                "Set it in config/.env.defaults or config/.env.local."
             )
         if not app_token:
             raise RuntimeError(
-                "SLACK_APP_TOKEN is missing from config/.env"
+                "SLACK_APP_TOKEN is missing. "
+                "Set it in config/.env.defaults or config/.env.local."
             )
 
         # Reject .env.example placeholder values

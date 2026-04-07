@@ -1620,10 +1620,10 @@ class TestCheckNewUser:
 # ---------------------------------------------------------------------------
 
 class TestBuildPromptContextAdmin:
-    """_build_prompt_context correctly computes is_admin."""
+    """_build_prompt_context correctly computes is_owner."""
 
     def test_admin_user_detected(self, tmp_path):
-        """User in admin_users list should have is_admin=True."""
+        """User in admin_users list should have is_owner=True."""
         dispatcher, _, _ = _make_dispatcher(tmp_path)
         dispatcher._runner_config = RunnerConfig(admin_users=("U0ADMIN",))
         task = make_task(
@@ -1634,10 +1634,10 @@ class TestBuildPromptContextAdmin:
             message_ts="1234.5678",
         )
         ctx = dispatcher._build_prompt_context(task, user_name="admin", display_name="Admin")
-        assert ctx.is_admin is True
+        assert ctx.is_owner is True
 
     def test_non_admin_user(self, tmp_path):
-        """User NOT in admin_users list should have is_admin=False."""
+        """User NOT in admin_users list should have is_owner=False."""
         dispatcher, _, _ = _make_dispatcher(tmp_path)
         dispatcher._runner_config = RunnerConfig(admin_users=("U0ADMIN",))
         task = make_task(
@@ -1648,10 +1648,10 @@ class TestBuildPromptContextAdmin:
             message_ts="1234.5678",
         )
         ctx = dispatcher._build_prompt_context(task, user_name="regular", display_name="Regular")
-        assert ctx.is_admin is False
+        assert ctx.is_owner is False
 
     def test_empty_admin_users(self, tmp_path):
-        """Empty admin_users means no one is admin."""
+        """Empty admin_users means no one is owner."""
         dispatcher, _, _ = _make_dispatcher(tmp_path)
         dispatcher._runner_config = RunnerConfig(admin_users=())
         task = make_task(
@@ -1662,7 +1662,7 @@ class TestBuildPromptContextAdmin:
             message_ts="1234.5678",
         )
         ctx = dispatcher._build_prompt_context(task, user_name="anyone", display_name="Anyone")
-        assert ctx.is_admin is False
+        assert ctx.is_owner is False
 
     def test_workspace_uses_team_name(self, tmp_path):
         """workspace should use team_name, not hardcoded 'default'."""
@@ -1672,7 +1672,7 @@ class TestBuildPromptContextAdmin:
             bot_name=dispatcher._user_config.bot_name,
             team_name="my-team",
             admin_channel="",
-            admin_description="",
+            owner_description="",
             opentree_home=dispatcher._user_config.opentree_home,
         )
         task = make_task(
@@ -1831,3 +1831,315 @@ class TestParsedMessageFilesImmutable:
         result = dispatcher.parse_message("<@UBOT123> hello", "UBOT123", files=files)
         with pytest.raises(AttributeError):
             result.files += ({"id": "F002"},)  # frozen dataclass prevents assignment
+
+
+# ---------------------------------------------------------------------------
+# reset-bot command
+# ---------------------------------------------------------------------------
+
+class TestResetBotCommand:
+    """reset-bot and reset-bot-all are recognized as bot commands."""
+
+    def test_reset_bot_in_bot_commands(self):
+        from opentree.runner.dispatcher import _BOT_COMMANDS
+        assert "reset-bot" in _BOT_COMMANDS
+
+    def test_reset_bot_all_in_bot_commands(self):
+        from opentree.runner.dispatcher import _BOT_COMMANDS
+        assert "reset-bot-all" in _BOT_COMMANDS
+
+    def test_reset_bot_parsed_as_admin_command(self, tmp_path):
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        result = dispatcher.parse_message("<@UBOT123> reset-bot", "UBOT123")
+        assert result.is_admin_command
+        assert result.admin_command == "reset-bot"
+
+    def test_reset_bot_all_parsed_as_admin_command(self, tmp_path):
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        result = dispatcher.parse_message("<@UBOT123> reset-bot-all", "UBOT123")
+        assert result.is_admin_command
+        assert result.admin_command == "reset-bot-all"
+
+
+class TestHandleResetBot:
+    """_handle_reset_bot soft resets and triggers restart."""
+
+    def test_sends_confirmation_messages(self, tmp_path):
+        """reset-bot sends an initial 'resetting' and a completion message."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        with patch("opentree.runner.dispatcher.reset_bot", return_value=["Regenerated config"]):
+            dispatcher._handle_reset_bot(task)
+        # At least two messages: the initial ack and the completion
+        assert slack_api.send_message.call_count >= 2
+
+    def test_calls_session_clear_all(self, tmp_path):
+        """reset-bot calls session_mgr.clear_all()."""
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        dispatcher._session_mgr = MagicMock()
+        task = make_task()
+        with patch("opentree.runner.dispatcher.reset_bot", return_value=["Done"]):
+            dispatcher._handle_reset_bot(task)
+        dispatcher._session_mgr.clear_all.assert_called_once()
+
+    def test_sets_exit_code_one(self, tmp_path):
+        """reset-bot sets exit_code = 1 to trigger restart."""
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        dispatcher._session_mgr = MagicMock()
+        task = make_task()
+        with patch("opentree.runner.dispatcher.reset_bot", return_value=["Done"]):
+            dispatcher._handle_reset_bot(task)
+        assert dispatcher.exit_code == 1
+
+    def test_sets_shutdown_event(self, tmp_path):
+        """reset-bot sets the shutdown event."""
+        shutdown_event = threading.Event()
+        dispatcher, _, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        dispatcher._session_mgr = MagicMock()
+        task = make_task()
+        with patch("opentree.runner.dispatcher.reset_bot", return_value=["Done"]):
+            dispatcher._handle_reset_bot(task)
+        assert shutdown_event.is_set()
+
+    def test_unauthorized_user_rejected(self, tmp_path):
+        """Non-admin user cannot use reset-bot."""
+        shutdown_event = threading.Event()
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        dispatcher._runner_config = RunnerConfig(admin_users=("U_ADMIN",))
+        task = make_task(user_id="U_RANDOM")
+        dispatcher._handle_admin_command(task, "reset-bot")
+        assert not shutdown_event.is_set()
+        msg_text = slack_api.send_message.call_args[0][1]
+        assert "authorized" in msg_text.lower() or "lock" in msg_text.lower()
+
+    def test_authorized_user_accepted(self, tmp_path):
+        """Admin user can use reset-bot."""
+        shutdown_event = threading.Event()
+        dispatcher, _, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        dispatcher._runner_config = RunnerConfig(admin_users=("U_ADMIN",))
+        dispatcher._session_mgr = MagicMock()
+        task = make_task(user_id="U_ADMIN")
+        with patch("opentree.runner.dispatcher.reset_bot", return_value=["Done"]):
+            dispatcher._handle_admin_command(task, "reset-bot")
+        assert shutdown_event.is_set()
+
+    def test_reset_bot_failure_sends_error_message(self, tmp_path):
+        """When reset_bot raises, an error message is sent."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        dispatcher._session_mgr = MagicMock()
+        task = make_task()
+        with patch("opentree.runner.dispatcher.reset_bot", side_effect=RuntimeError("boom")):
+            dispatcher._handle_reset_bot(task)
+        # Find the error message among sent messages
+        error_msgs = [
+            c for c in slack_api.send_message.call_args_list
+            if ":x:" in str(c)
+        ]
+        assert len(error_msgs) >= 1
+
+    def test_restart_triggered_even_on_failure(self, tmp_path):
+        """reset-bot triggers restart even when reset_bot() raises."""
+        shutdown_event = threading.Event()
+        dispatcher, _, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        dispatcher._session_mgr = MagicMock()
+        task = make_task()
+        with patch("opentree.runner.dispatcher.reset_bot", side_effect=RuntimeError("boom")):
+            dispatcher._handle_reset_bot(task)
+        assert dispatcher.exit_code == 1
+        assert shutdown_event.is_set()
+
+
+class TestHandleResetBotAll:
+    """_handle_reset_bot_all hard resets and triggers restart."""
+
+    def test_sends_warning_message(self, tmp_path):
+        """reset-bot-all sends a warning message before reset."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        dispatcher._session_mgr = MagicMock()
+        task = make_task()
+        with patch("opentree.runner.dispatcher.reset_bot_all", return_value=["Cleared data"]):
+            dispatcher._handle_reset_bot_all(task)
+        # First message should contain a warning
+        first_msg = slack_api.send_message.call_args_list[0][0][1]
+        assert "warning" in first_msg.lower() or ":warning:" in first_msg
+
+    def test_calls_session_clear_all(self, tmp_path):
+        """reset-bot-all calls session_mgr.clear_all()."""
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        dispatcher._session_mgr = MagicMock()
+        task = make_task()
+        with patch("opentree.runner.dispatcher.reset_bot_all", return_value=["Done"]):
+            dispatcher._handle_reset_bot_all(task)
+        dispatcher._session_mgr.clear_all.assert_called_once()
+
+    def test_sets_exit_code_one(self, tmp_path):
+        """reset-bot-all sets exit_code = 1 to trigger restart."""
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        dispatcher._session_mgr = MagicMock()
+        task = make_task()
+        with patch("opentree.runner.dispatcher.reset_bot_all", return_value=["Done"]):
+            dispatcher._handle_reset_bot_all(task)
+        assert dispatcher.exit_code == 1
+
+    def test_sets_shutdown_event(self, tmp_path):
+        """reset-bot-all sets the shutdown event."""
+        shutdown_event = threading.Event()
+        dispatcher, _, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        dispatcher._session_mgr = MagicMock()
+        task = make_task()
+        with patch("opentree.runner.dispatcher.reset_bot_all", return_value=["Done"]):
+            dispatcher._handle_reset_bot_all(task)
+        assert shutdown_event.is_set()
+
+    def test_always_restarts_even_on_failure(self, tmp_path):
+        """reset-bot-all triggers restart even when reset_bot_all() raises."""
+        shutdown_event = threading.Event()
+        dispatcher, _, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        dispatcher._session_mgr = MagicMock()
+        task = make_task()
+        with patch("opentree.runner.dispatcher.reset_bot_all", side_effect=RuntimeError("boom")):
+            dispatcher._handle_reset_bot_all(task)
+        assert dispatcher.exit_code == 1
+        assert shutdown_event.is_set()
+
+    def test_unauthorized_user_rejected(self, tmp_path):
+        """Non-admin user cannot use reset-bot-all."""
+        shutdown_event = threading.Event()
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        dispatcher._runner_config = RunnerConfig(admin_users=("U_ADMIN",))
+        task = make_task(user_id="U_RANDOM")
+        dispatcher._handle_admin_command(task, "reset-bot-all")
+        assert not shutdown_event.is_set()
+
+    def test_authorized_user_accepted(self, tmp_path):
+        """Admin user can use reset-bot-all."""
+        shutdown_event = threading.Event()
+        dispatcher, _, _ = _make_dispatcher(tmp_path, shutdown_event=shutdown_event)
+        dispatcher._runner_config = RunnerConfig(admin_users=("U_ADMIN",))
+        dispatcher._session_mgr = MagicMock()
+        task = make_task(user_id="U_ADMIN")
+        with patch("opentree.runner.dispatcher.reset_bot_all", return_value=["Done"]):
+            dispatcher._handle_admin_command(task, "reset-bot-all")
+        assert shutdown_event.is_set()
+
+    def test_clear_all_called_before_reset_bot_all(self, tmp_path):
+        """Sessions are cleared before reset_bot_all runs (data/ may be wiped)."""
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        call_order: list[str] = []
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.clear_all.side_effect = lambda: call_order.append("clear_all")
+        dispatcher._session_mgr = mock_session_mgr
+        task = make_task()
+
+        def fake_reset_all(home):
+            call_order.append("reset_bot_all")
+            return ["Cleared data"]
+
+        with patch("opentree.runner.dispatcher.reset_bot_all", side_effect=fake_reset_all):
+            dispatcher._handle_reset_bot_all(task)
+
+        assert call_order == ["clear_all", "reset_bot_all"]
+
+    def test_failure_sends_error_message(self, tmp_path):
+        """When reset_bot_all raises, an error message is sent."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        dispatcher._session_mgr = MagicMock()
+        task = make_task()
+        with patch("opentree.runner.dispatcher.reset_bot_all", side_effect=RuntimeError("boom")):
+            dispatcher._handle_reset_bot_all(task)
+        error_msgs = [
+            c for c in slack_api.send_message.call_args_list
+            if ":x:" in str(c)
+        ]
+        assert len(error_msgs) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Step 11b: memory_extraction_enabled flag
+# ---------------------------------------------------------------------------
+
+class TestDispatcherMemoryExtractionEnabled:
+    """Tests that memory extraction respects RunnerConfig.memory_extraction_enabled."""
+
+    def test_skipped_when_disabled(self, tmp_path):
+        """When memory_extraction_enabled=False, extract_memories is NOT called."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        # Override runner config to disable memory extraction.
+        dispatcher._runner_config = RunnerConfig(
+            max_concurrent_tasks=2,
+            task_timeout=30,
+            memory_extraction_enabled=False,
+        )
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        fake_result = MagicMock()
+        fake_result.is_error = False
+        fake_result.is_timeout = False
+        fake_result.response_text = "I prefer coffee over tea"
+        fake_result.session_id = "sess-mem"
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.memory_extractor.extract_memories") as mock_extract,
+        ):
+            MockClaude.return_value.run.return_value = fake_result
+            dispatcher._process_task(task)
+
+        mock_extract.assert_not_called()
+
+    def test_runs_when_enabled(self, tmp_path):
+        """When memory_extraction_enabled=True, extract_memories IS called."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        # Override runner config to enable memory extraction (default).
+        dispatcher._runner_config = RunnerConfig(
+            max_concurrent_tasks=2,
+            task_timeout=30,
+            memory_extraction_enabled=True,
+        )
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        fake_result = MagicMock()
+        fake_result.is_error = False
+        fake_result.is_timeout = False
+        fake_result.response_text = "I prefer coffee over tea"
+        fake_result.session_id = "sess-mem"
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.memory_extractor.extract_memories", return_value=[]) as mock_extract,
+        ):
+            MockClaude.return_value.run.return_value = fake_result
+            dispatcher._process_task(task)
+
+        mock_extract.assert_called_once()
+
+    def test_skipped_when_response_empty_even_if_enabled(self, tmp_path):
+        """When response_text is empty, memory extraction is skipped regardless of flag."""
+        dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
+        dispatcher._runner_config = RunnerConfig(
+            max_concurrent_tasks=2,
+            task_timeout=30,
+            memory_extraction_enabled=True,
+        )
+        task = make_task()
+        task.status = TaskStatus.RUNNING
+
+        fake_result = MagicMock()
+        fake_result.is_error = False
+        fake_result.is_timeout = False
+        fake_result.response_text = ""  # empty response
+        fake_result.session_id = "sess-mem"
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.memory_extractor.extract_memories") as mock_extract,
+        ):
+            MockClaude.return_value.run.return_value = fake_result
+            dispatcher._process_task(task)
+
+        mock_extract.assert_not_called()

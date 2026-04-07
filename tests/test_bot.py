@@ -523,6 +523,7 @@ class TestCliIntegration:
         reg_path.write_text('{"version": 1, "modules": {}}', encoding="utf-8")
 
         user_cfg = tmp_path / "config" / "user.json"
+        # Uses legacy "admin_description" key to test backward-compat fallback
         user_cfg.write_text(
             '{"bot_name": "Test", "team_name": "", "admin_channel": "", "admin_description": ""}',
             encoding="utf-8",
@@ -584,6 +585,175 @@ class TestCliIntegration:
                 bot_module.Bot = original_bot_cls
 
         mock_bot_cls.assert_not_called()
+
+
+# ===========================================================================
+# Health check integration tests
+# ===========================================================================
+
+
+# ===========================================================================
+# _parse_env_file tests
+# ===========================================================================
+
+
+class TestParseEnvFile:
+    """Test the static _parse_env_file helper."""
+
+    def test_parses_key_value(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text("FOO=bar\nBAZ=qux\n", encoding="utf-8")
+        result = Bot._parse_env_file(env_file)
+        assert result == {"FOO": "bar", "BAZ": "qux"}
+
+    def test_ignores_comments_and_empty(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "# comment\n\nFOO=bar\n  # indented comment\n\nBAZ=qux\n",
+            encoding="utf-8",
+        )
+        result = Bot._parse_env_file(env_file)
+        assert result == {"FOO": "bar", "BAZ": "qux"}
+
+    def test_strips_quotes(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            'DOUBLE="hello"\nSINGLE=\'world\'\n',
+            encoding="utf-8",
+        )
+        result = Bot._parse_env_file(env_file)
+        assert result == {"DOUBLE": "hello", "SINGLE": "world"}
+
+    def test_handles_equals_in_value(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text("URL=https://example.com?a=1&b=2\n", encoding="utf-8")
+        result = Bot._parse_env_file(env_file)
+        assert result == {"URL": "https://example.com?a=1&b=2"}
+
+
+# ===========================================================================
+# Three-layer .env loading tests
+# ===========================================================================
+
+
+class TestLoadTokensLayered:
+    """Test three-layer .env loading."""
+
+    def _make_layered_home(
+        self,
+        tmp_path: Path,
+        *,
+        defaults: str | None = None,
+        local: str | None = None,
+        secrets: str | None = None,
+        legacy: str | None = None,
+    ) -> Path:
+        """Create opentree home with specific .env files."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        if defaults is not None:
+            (config_dir / ".env.defaults").write_text(defaults, encoding="utf-8")
+        if local is not None:
+            (config_dir / ".env.local").write_text(local, encoding="utf-8")
+        if secrets is not None:
+            (config_dir / ".env.secrets").write_text(secrets, encoding="utf-8")
+        if legacy is not None:
+            (config_dir / ".env").write_text(legacy, encoding="utf-8")
+        return tmp_path
+
+    def test_defaults_only(self, tmp_path):
+        """Only .env.defaults present -> loads normally."""
+        home = self._make_layered_home(
+            tmp_path,
+            defaults="SLACK_BOT_TOKEN=xoxb-default\nSLACK_APP_TOKEN=xapp-default\n",
+        )
+        bot = Bot(home)
+        bot_token, app_token = bot._load_tokens()
+        assert bot_token == "xoxb-default"
+        assert app_token == "xapp-default"
+
+    def test_defaults_plus_local_override(self, tmp_path):
+        """env.local overrides .env.defaults tokens."""
+        home = self._make_layered_home(
+            tmp_path,
+            defaults="SLACK_BOT_TOKEN=xoxb-default\nSLACK_APP_TOKEN=xapp-default\n",
+            local="SLACK_BOT_TOKEN=xoxb-local\n",
+        )
+        bot = Bot(home)
+        bot_token, app_token = bot._load_tokens()
+        assert bot_token == "xoxb-local"
+        assert app_token == "xapp-default"
+
+    def test_local_only_no_defaults(self, tmp_path):
+        """Only .env.local (no defaults) -> not loaded; falls through to legacy check."""
+        home = self._make_layered_home(
+            tmp_path,
+            local="SLACK_BOT_TOKEN=xoxb-local\nSLACK_APP_TOKEN=xapp-local\n",
+        )
+        bot = Bot(home)
+        with pytest.raises(RuntimeError, match="No .env file found"):
+            bot._load_tokens()
+
+    def test_legacy_env_fallback(self, tmp_path):
+        """Only .env -> fallback with WARNING log."""
+        home = self._make_layered_home(
+            tmp_path,
+            legacy="SLACK_BOT_TOKEN=xoxb-legacy\nSLACK_APP_TOKEN=xapp-legacy\n",
+        )
+        bot = Bot(home)
+        import logging
+        with patch("opentree.runner.bot.logger") as mock_logger:
+            bot_token, app_token = bot._load_tokens()
+        assert bot_token == "xoxb-legacy"
+        assert app_token == "xapp-legacy"
+        # Verify warning was logged
+        warning_calls = [
+            c for c in mock_logger.warning.call_args_list
+            if "Legacy" in str(c) or "legacy" in str(c).lower()
+        ]
+        assert len(warning_calls) > 0
+
+    def test_no_env_files_raises(self, tmp_path):
+        """No env files at all -> RuntimeError."""
+        home = self._make_layered_home(tmp_path)
+        bot = Bot(home)
+        with pytest.raises(RuntimeError, match="No .env file found"):
+            bot._load_tokens()
+
+    def test_secrets_overrides_all(self, tmp_path):
+        """.env.secrets has highest priority."""
+        home = self._make_layered_home(
+            tmp_path,
+            defaults="SLACK_BOT_TOKEN=xoxb-default\nSLACK_APP_TOKEN=xapp-default\n",
+            local="SLACK_BOT_TOKEN=xoxb-local\nSLACK_APP_TOKEN=xapp-local\n",
+            secrets="SLACK_BOT_TOKEN=xoxb-secret\nSLACK_APP_TOKEN=xapp-secret\n",
+        )
+        bot = Bot(home)
+        bot_token, app_token = bot._load_tokens()
+        assert bot_token == "xoxb-secret"
+        assert app_token == "xapp-secret"
+
+    def test_defaults_with_placeholder_raises(self, tmp_path):
+        """Placeholder values still rejected by _validate_not_placeholder."""
+        home = self._make_layered_home(
+            tmp_path,
+            defaults="SLACK_BOT_TOKEN=xoxb-your-bot-token\nSLACK_APP_TOKEN=xapp-real\n",
+        )
+        bot = Bot(home)
+        with pytest.raises(RuntimeError, match="placeholder"):
+            bot._load_tokens()
+
+    def test_local_adds_custom_key(self, tmp_path):
+        """.env.local can add OPENAI_API_KEY; bot still starts (key doesn't affect token loading)."""
+        home = self._make_layered_home(
+            tmp_path,
+            defaults="SLACK_BOT_TOKEN=xoxb-real\nSLACK_APP_TOKEN=xapp-real\n",
+            local="OPENAI_API_KEY=sk-test-key\n",
+        )
+        bot = Bot(home)
+        bot_token, app_token = bot._load_tokens()
+        assert bot_token == "xoxb-real"
+        assert app_token == "xapp-real"
 
 
 # ===========================================================================

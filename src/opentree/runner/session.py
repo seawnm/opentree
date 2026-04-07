@@ -89,6 +89,15 @@ class SessionManager:
             self._sessions = {**self._sessions, thread_ts: updated}
             self._save()
 
+    def clear_all(self) -> None:
+        """Clear all sessions (in-memory + on-disk).
+
+        Thread-safe: acquires the internal lock before mutation.
+        """
+        with self._lock:
+            self._sessions = {}
+            self._save()
+
     def remove(self, thread_ts: str) -> None:
         """Remove the session mapping for *thread_ts*.
 

@@ -4,39 +4,53 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-07
+
+> **Owner Freedom** — 術語替換、人設重寫、CLAUDE.md 保護、.env 分層、Reset 指令、記憶系統升級
+>
+> 設計決策：[openspec/changes/20260407-owner-freedom/](openspec/changes/20260407-owner-freedom/)
+
 ### Added
-- **`is_admin` 欄位** — PromptContext 新增 `is_admin: bool`，由 Dispatcher 比對 `RunnerConfig.admin_users` 自動計算，system prompt 輸出「權限等級：Admin」或「權限等級：一般使用者」
-- **`build_channel_block()`** — 新增頻道資訊區塊，輸出頻道 ID、Thread TS、Workspace（參考 DOGI `build_channel_block`）
-- **thread_participants 自動填入** — Dispatcher 從 thread 歷史提取參與者 display name，slack hook 的多人 thread 警告現可正常觸發
-- **記憶讀取提示** — `build_identity_block()` 在記憶路徑後加入「如需了解此使用者的偏好和習慣，請使用 Read 工具讀取上述檔案」
-- **`has_result_event` 旗標** — StreamParser 的 ProgressState 新增旗標，區分「token 真的是 0」和「沒收到 result event」
-- **Token 缺失 warning log** — Claude CLI stream 未回報 result event 或 token 都為 0 時，記錄 warning（含 pid、exit_code、timed_out 狀態）
-- **PromptContext 擴充** — 新增 `thread_participants`（Thread 參與者列表）和 `opentree_home`（根目錄路徑）欄位，供模組 hook 動態注入
-- **Dispatcher `_check_new_user`** — 新使用者偵測邏輯（memory.md 不存在/空/僅模板時回傳 True），驅動 FTUE 導覽
-- **slack hook: Thread 參與者提醒** — 當 thread 有其他參與者時注入安全提醒，自動排除當前使用者
-- **requirement hook: 訪談上下文偵測** — 掃描 `data/requirements/*/interviews/*.yaml`，匹配 thread_ts 時注入需求訪談上下文（受訪者、階段、題數、觀察筆記）
-- **版本號 single source of truth** — `__version__` 改為 `importlib.metadata.version("opentree")` 動態讀取，fallback 硬編碼；`runner.__version__` 改為 re-export 主套件版本。新增版本一致性測試
-- **`_check_new_user` 快取** — 已確認非新使用者的 memory_path 快取到 `_known_existing_users` set，避免每次請求重複讀檔
-- **pyyaml 主依賴** — `pyyaml>=6.0` 加入 `pyproject.toml` 主依賴，requirement hook 改為直接 import（移除 optional fallback）
-- **README 完整覆寫** — 從 21 行佔位符更新為完整英文文件，涵蓋功能特色、安裝、Quick Start、模組系統、架構、開發指引
+- **Admin -> Owner 術語替換** — 全系統將「Admin」概念替換為「Owner」，向後相容保留所有別名（`{{admin_description}}`、`context["is_admin"]`、`--admin-users` CLI）
+- **Owner 人設重寫** — personality 模組從「團隊虛擬員工」轉向「個人 AI 助手」（忠誠、好奇、正向、主動關心），character.md + tone-rules.md 全面改寫
+- **CLAUDE.md Marker Comment 保護** — `<!-- OPENTREE:AUTO:BEGIN/END -->` 標記自動生成區塊，Owner 自訂內容在 marker 外不被 refresh/install 覆蓋。新增 `wrap_with_markers()`、`generate_with_preservation()` API
+- **.env 三段式載入** — `.env.defaults`（bot 預設 key）+ `.env.local`（Owner 自訂 key）+ `.env.secrets`（可選），向後相容舊 `.env` fallback。新增 `_parse_env_file()` + placeholder 驗證
+- **reset-bot / reset-bot-all 指令** — Owner 專用。`reset-bot` 軟重設（保留 .env.local + data/ + Owner CLAUDE.md 內容）；`reset-bot-all` 硬重設（清除全部自訂）。Best-effort 錯誤處理 + SessionManager.clear_all() 並發安全
+- **四區段結構化記憶系統** — Pinned（明確記住）/ Core（偏好+環境）/ Episodes（互動經驗）/ Active（近期工作）。語意路由（記住->Pinned, 偏好->Core）+ 語意去重 + 舊格式自動 migration + per-user threading.Lock 並發安全 + 原子寫入
+- **memory_extraction_enabled 設定** — RunnerConfig 新增旗標，可一鍵關閉記憶提取
+- **`is_admin` 欄位** — PromptContext 新增 `is_admin: bool`（alias -> `is_owner`），system prompt 輸出權限等級
+- **`build_channel_block()`** — 新增頻道資訊區塊，輸出頻道 ID、Thread TS、Workspace
+- **thread_participants 自動填入** — Dispatcher 從 thread 歷史提取參與者 display name
+- **記憶讀取提示** — `build_identity_block()` 在記憶路徑後加入讀取提示
+- **`has_result_event` 旗標** — StreamParser 的 ProgressState 區分「token 為 0」和「沒收到 result event」
+- **Token 缺失 warning log** — Claude CLI stream 未回報 result event 時記錄 warning
+- **PromptContext 擴充** — 新增 `thread_participants`、`opentree_home` 欄位
+- **Dispatcher `_check_new_user`** — 新使用者偵測 + `_known_existing_users` 快取
+- **slack hook: Thread 參與者提醒** — 多參與者 thread 注入安全提醒
+- **requirement hook: 訪談上下文偵測** — thread_ts 匹配時注入需求訪談上下文
+- **版本號 single source of truth** — `importlib.metadata.version("opentree")` 動態讀取
+- **pyyaml 主依賴** — 加入 `pyproject.toml` 主依賴
+- **README 完整覆寫** — 涵蓋功能特色、安裝、Quick Start、模組系統、架構、開發指引
 
 ### Changed
-- **workspace 動態化** — `_build_prompt_context()` 的 workspace 從硬編碼 `"default"` 改為 `team_name or "default"`
-- **Modules manifest permissions 路徑統一** — scheduler、slack、audit-logger、requirement 的 `permissions.allow` 從 `$OPENTREE_HOME/bin` 改為 `Bash(uv run --directory *:*<tool>*)` 格式，對齊 rules 中的實際 CLI 指令
+- **workspace 動態化** — `_build_prompt_context()` workspace 從硬編碼改為 `team_name or "default"`
+- **Modules manifest permissions 路徑統一** — 對齊 `Bash(uv run --directory *:*<tool>*)` 格式
 - **Modules manifest placeholder 補齊** — personality 補 `admin_description`、guardrail 補 `bot_name`、memory 補 `bot_name`
+- **guardrail 模組術語** — security-rules / permission-check / denial-escalation / message-ban 全部從「管理員」更新為「Owner」
+- **.env.defaults guardrail 保護** — security-rules.md 新增禁止存取 .env.defaults / .env.local / .env.secrets 規則
 
 ### Fixed
-- **run.sh command detection** — `opentree init` 自動偵測 source checkout（pyproject.toml 存在）並使用 `uv run --directory` 取代裸 `opentree` 指令。路徑使用單引號避免空格問題。非 source checkout 時保持裸 `opentree`
-- **Slack 依賴自動安裝** — source checkout 模式下 `opentree init` 自動執行 `uv sync --extra slack`，失敗時警告但不中斷（timeout 120s）
+- **run.sh command detection** — 自動偵測 source checkout 並使用 `uv run --directory`
+- **Slack 依賴自動安裝** — source checkout 模式下自動 `uv sync --extra slack`
 - 移除 init.py hint 訊息中已不存在的 `--admin-channel` 參數引用
 - 移除 guardrail manifest 中 `admin_channel` placeholder 殘留宣告
-- run.sh singleton lock file 改到 `/tmp/`（修復 WSL2 DrvFs 上 flock 不生效的問題）
-- Registry.lock file 同步改到 `/tmp/`（md5 hash 隔離不同 instance）
-- **Elapsed time 與 token stats 解耦** — 完成訊息的耗時（`:clock1:`）不再依賴 token 計數才顯示。Claude CLI 未回報 usage 時，耗時仍正常顯示（progress.py line 135 條件修正）
-- **3 個 xfail 升級為 hard pass** — test_long_input_handled、test_multi_turn_context、test_same_thread_maintains_context 在單 instance 環境穩定通過
-- 清理 modules/ 殘留：5 個 `.gitkeep`（rules 已有 .md）、3 個 `__pycache__/`
-- **`ParsedMessage.files` 不可變** — 從 `list`（mutable）改為 `tuple`，對齊 `frozen=True` dataclass 語義
-- **未使用 import 清理** — dispatcher.py（`build_completion_blocks`、`TaskStatus`、`Optional`）、prompt.py（`field`）、requirement hook（`os`、`glob`）
+- run.sh singleton lock file 改到 `/tmp/`（修復 WSL2 DrvFs flock 問題）
+- Registry.lock file 同步改到 `/tmp/`（md5 hash 隔離）
+- **Elapsed time 與 token stats 解耦** — 完成訊息耗時不再依賴 token 計數
+- **3 個 xfail 升級為 hard pass** — test_long_input_handled、test_multi_turn_context、test_same_thread_maintains_context
+- 清理 modules/ 殘留：5 個 `.gitkeep`、3 個 `__pycache__/`
+- **`ParsedMessage.files` 不可變** — 從 `list` 改為 `tuple`
+- **未使用 import 清理** — dispatcher.py、prompt.py、requirement hook
 
 ## [0.4.0] - 2026-04-04
 

@@ -50,7 +50,8 @@ class PlaceholderEngine:
             "{{bot_name}}": config.bot_name or "OpenTree",
             "{{team_name}}": config.team_name,
             "{{admin_channel}}": config.admin_channel,
-            "{{admin_description}}": config.admin_description,
+            "{{owner_description}}": config.owner_description,
+            "{{admin_description}}": config.owner_description,  # backward compat alias
             "{{opentree_home}}": config.opentree_home.replace("\\", "/"),
         }
 

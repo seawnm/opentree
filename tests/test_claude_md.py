@@ -330,3 +330,177 @@ class TestGenerateWithDiskManifests:
             if line.startswith("|") and not line.startswith("| 模組") and not line.startswith("|--")
         ]
         assert len(table_rows) == 10
+
+
+# ---------------------------------------------------------------------------
+# Phase 2A: Marker comment tests
+# ---------------------------------------------------------------------------
+
+from opentree.generator.claude_md import (
+    _AUTO_BEGIN,
+    _AUTO_END,
+    _OWNER_HINT,
+)
+
+
+class TestWrapWithMarkers:
+    """wrap_with_markers wraps generate() output with marker comments."""
+
+    def test_wraps_content_with_markers(self, tmp_path: Path) -> None:
+        _write_manifest(tmp_path, "core", description="Core module")
+        registry = _make_registry("core")
+        config = UserConfig(bot_name="TestBot", opentree_home=str(tmp_path))
+        gen = ClaudeMdGenerator()
+
+        raw = gen.generate(tmp_path, registry, config)
+        wrapped = gen.wrap_with_markers(raw)
+
+        assert wrapped.startswith(_AUTO_BEGIN + "\n")
+        assert _AUTO_END in wrapped
+        # raw content should be between markers
+        begin_end = wrapped.index(_AUTO_BEGIN)
+        end_start = wrapped.index(_AUTO_END)
+        between = wrapped[begin_end + len(_AUTO_BEGIN) + 1 : end_start].rstrip("\n")
+        assert between == raw.rstrip("\n")
+
+    def test_contains_owner_hint(self, tmp_path: Path) -> None:
+        _write_manifest(tmp_path, "core", description="Core module")
+        registry = _make_registry("core")
+        config = UserConfig(bot_name="TestBot", opentree_home=str(tmp_path))
+        gen = ClaudeMdGenerator()
+
+        raw = gen.generate(tmp_path, registry, config)
+        wrapped = gen.wrap_with_markers(raw)
+
+        assert _OWNER_HINT in wrapped
+
+
+class TestGenerateWithPreservation:
+    """generate_with_preservation merges auto-generated and owner content."""
+
+    def _setup(self, tmp_path: Path):
+        """Helper to set up a generator with a single module."""
+        _write_manifest(tmp_path, "core", description="Core module")
+        registry = _make_registry("core")
+        config = UserConfig(bot_name="TestBot", opentree_home=str(tmp_path))
+        gen = ClaudeMdGenerator()
+        return gen, tmp_path, registry, config
+
+    def test_new_file_returns_auto_with_markers(self, tmp_path: Path) -> None:
+        gen, home, registry, config = self._setup(tmp_path)
+
+        result = gen.generate_with_preservation(None, home, registry, config)
+
+        assert result.startswith(_AUTO_BEGIN + "\n")
+        assert _AUTO_END in result
+        assert _OWNER_HINT in result
+
+    def test_preserves_owner_content(self, tmp_path: Path) -> None:
+        gen, home, registry, config = self._setup(tmp_path)
+
+        owner_text = "\n## My Custom Section\n\nThis is my custom content.\n"
+        existing = (
+            _AUTO_BEGIN + "\nold auto content\n" + _AUTO_END
+            + _OWNER_HINT + owner_text
+        )
+
+        result = gen.generate_with_preservation(existing, home, registry, config)
+
+        assert "## My Custom Section" in result
+        assert "This is my custom content." in result
+        # Old auto content should be replaced
+        assert "old auto content" not in result
+        # New auto content should be present
+        assert "# TestBot" in result
+
+    def test_migration_no_markers(self, tmp_path: Path) -> None:
+        gen, home, registry, config = self._setup(tmp_path)
+
+        old_content = "# Old CLAUDE.md\n\nSome legacy content.\n"
+
+        result = gen.generate_with_preservation(old_content, home, registry, config)
+
+        # Old content treated as owner content, preserved after auto block
+        assert _AUTO_BEGIN in result
+        assert _AUTO_END in result
+        assert "# Old CLAUDE.md" in result
+        assert "Some legacy content." in result
+
+    def test_find_from_begin_handles_marker_in_owner_content(self, tmp_path: Path) -> None:
+        """find(_AUTO_END, begin_idx) picks the first END after BEGIN,
+        so any END marker embedded in owner content is treated as owner text."""
+        gen, home, registry, config = self._setup(tmp_path)
+
+        # Owner content that mentions the END marker (e.g. documentation)
+        owner_text = (
+            "\n## Notes\n\n"
+            f"The auto section ends with `{_AUTO_END}`.\n"
+        )
+        existing = (
+            _AUTO_BEGIN + "\nold auto\n" + _AUTO_END
+            + _OWNER_HINT + owner_text
+        )
+
+        result = gen.generate_with_preservation(existing, home, registry, config)
+
+        # find(_AUTO_END, begin_idx) picks the first END after BEGIN, so owner
+        # content including the mention of the marker should be preserved
+        assert f"The auto section ends with `{_AUTO_END}`." in result
+
+    def test_empty_owner_content(self, tmp_path: Path) -> None:
+        gen, home, registry, config = self._setup(tmp_path)
+
+        existing = (
+            _AUTO_BEGIN + "\nold auto content\n" + _AUTO_END
+            + _OWNER_HINT
+        )
+
+        result = gen.generate_with_preservation(existing, home, registry, config)
+
+        # Should have auto content + hint, no leftover owner bits
+        assert _AUTO_BEGIN in result
+        assert _AUTO_END in result
+        assert _OWNER_HINT in result
+        assert "old auto content" not in result
+
+    def test_only_begin_no_end(self, tmp_path: Path) -> None:
+        gen, home, registry, config = self._setup(tmp_path)
+
+        existing = _AUTO_BEGIN + "\nbroken content\n"
+
+        result = gen.generate_with_preservation(existing, home, registry, config)
+
+        # Missing END → migration fallback: entire existing treated as owner
+        assert _AUTO_BEGIN + "\n" in result
+        assert _AUTO_END in result
+        assert "broken content" in result
+
+    def test_only_end_no_begin(self, tmp_path: Path) -> None:
+        gen, home, registry, config = self._setup(tmp_path)
+
+        existing = "some content\n" + _AUTO_END + "\ntrailing\n"
+
+        result = gen.generate_with_preservation(existing, home, registry, config)
+
+        # Missing BEGIN → migration fallback: entire existing treated as owner
+        assert _AUTO_BEGIN + "\n" in result
+        assert "some content" in result
+
+    def test_owner_hint_not_duplicated(self, tmp_path: Path) -> None:
+        gen, home, registry, config = self._setup(tmp_path)
+
+        owner_text = "\n## My Section\n\nContent.\n"
+        existing = (
+            _AUTO_BEGIN + "\nold auto\n" + _AUTO_END
+            + _OWNER_HINT + owner_text
+        )
+
+        # First preservation
+        result1 = gen.generate_with_preservation(existing, home, registry, config)
+        # Second preservation on the output of the first
+        result2 = gen.generate_with_preservation(result1, home, registry, config)
+
+        # _OWNER_HINT should appear exactly once
+        assert result2.count(_OWNER_HINT) == 1
+        # Owner content still preserved
+        assert "## My Section" in result2

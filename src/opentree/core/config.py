@@ -24,7 +24,7 @@ class UserConfig:
     bot_name: str = "OpenTree"
     team_name: str = ""
     admin_channel: str = ""
-    admin_description: str = ""
+    owner_description: str = ""
     opentree_home: str = ""
 
 
@@ -49,6 +49,6 @@ def load_user_config(opentree_home: Path) -> UserConfig:
         bot_name=data.get("bot_name", "OpenTree"),
         team_name=data.get("team_name", ""),
         admin_channel=data.get("admin_channel", ""),
-        admin_description=data.get("admin_description", ""),
+        owner_description=data.get("owner_description", data.get("admin_description", "")),
         opentree_home=str(opentree_home),
     )

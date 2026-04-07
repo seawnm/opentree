@@ -34,7 +34,7 @@ class TestLoadConfigFromFile:
         assert result.team_name == "DOGI Team"
         assert result.admin_channel == "C012345"
         assert result.opentree_home == str(tmp_path)
-        assert result.admin_description == ""
+        assert result.owner_description == ""
 
 
 class TestLoadConfigMissingFile:
@@ -141,33 +141,67 @@ class TestOpentreeHomeAlwaysSet:
         assert result.opentree_home == str(tmp_path)
 
 
-class TestAdminDescriptionDefault:
-    """test_admin_description_default_empty -- default is empty string."""
+class TestOwnerDescriptionDefault:
+    """test_owner_description_default_empty -- default is empty string."""
 
     def test_default_empty(self) -> None:
         config = UserConfig()
-        assert config.admin_description == ""
+        assert config.owner_description == ""
 
 
-class TestAdminDescriptionFromJson:
-    """test_admin_description_from_json -- loaded from user.json."""
+class TestOwnerDescriptionFromJson:
+    """test_owner_description_from_json -- loaded from user.json with new key."""
 
     def test_from_json(self, tmp_path: Path) -> None:
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config_file = config_dir / "user.json"
         config_file.write_text(
-            json.dumps({"admin_description": "The team admin"}),
+            json.dumps({"owner_description": "The team owner"}),
             encoding="utf-8",
         )
 
         result = load_user_config(tmp_path)
 
-        assert result.admin_description == "The team admin"
+        assert result.owner_description == "The team owner"
 
 
-class TestAdminDescriptionMissingUsesDefault:
-    """test_admin_description_missing_uses_default -- missing field defaults to empty."""
+class TestOwnerDescriptionFallbackFromAdminDescription:
+    """test_owner_description_fallback -- old admin_description JSON key is accepted."""
+
+    def test_fallback_from_old_key(self, tmp_path: Path) -> None:
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "user.json"
+        config_file.write_text(
+            json.dumps({"admin_description": "Legacy admin desc"}),
+            encoding="utf-8",
+        )
+
+        result = load_user_config(tmp_path)
+
+        assert result.owner_description == "Legacy admin desc"
+
+
+class TestOwnerDescriptionPrecedenceWhenBothKeysPresent:
+    """owner_description wins when both keys exist in the JSON."""
+
+    def test_new_key_wins_over_old_key(self, tmp_path: Path) -> None:
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "user.json").write_text(
+            json.dumps({
+                "owner_description": "New value",
+                "admin_description": "Old value",
+            }),
+            encoding="utf-8",
+        )
+        result = load_user_config(tmp_path)
+        assert result.owner_description == "New value"
+
+
+class TestOwnerDescriptionMissingUsesDefault:
+    """test_owner_description_missing_uses_default -- missing field defaults to empty."""
 
     def test_missing_uses_default(self, tmp_path: Path) -> None:
         config_dir = tmp_path / "config"
@@ -180,4 +214,4 @@ class TestAdminDescriptionMissingUsesDefault:
 
         result = load_user_config(tmp_path)
 
-        assert result.admin_description == ""
+        assert result.owner_description == ""

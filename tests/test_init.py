@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -79,6 +80,7 @@ class TestInitDirectoryStructure:
         assert user_json["bot_name"] == "MyBot"
         assert user_json["team_name"] == "MyTeam"
         assert user_json["admin_channel"] == ""  # deprecated, always empty
+        assert "owner_description" in user_json
 
     def test_init_non_interactive_defaults(self, opentree_home: Path) -> None:
         result = runner.invoke(
@@ -622,3 +624,185 @@ class TestInitCommandDetection:
             )
         assert result.exit_code == 0, result.output
         assert not mock_run.called, "uv sync should not be called in installed mode"
+
+
+# ------------------------------------------------------------------
+# Phase 2B: .env file generation
+# ------------------------------------------------------------------
+
+
+class TestInitEnvFiles:
+    """opentree init generates .env.defaults + .env.local.example."""
+
+    def test_generates_env_defaults(self, opentree_home: Path) -> None:
+        """init should create config/.env.defaults."""
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--owner", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+        env_defaults = opentree_home / "config" / ".env.defaults"
+        assert env_defaults.exists()
+        content = env_defaults.read_text(encoding="utf-8")
+        assert "SLACK_BOT_TOKEN" in content
+        assert "SLACK_APP_TOKEN" in content
+
+    def test_generates_env_local_example(self, opentree_home: Path) -> None:
+        """init should create config/.env.local.example."""
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--owner", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+        env_local_example = opentree_home / "config" / ".env.local.example"
+        assert env_local_example.exists()
+        content = env_local_example.read_text(encoding="utf-8")
+        assert "Owner" in content or "owner" in content.lower()
+        assert ".env.local" in content
+
+    def test_no_legacy_env_example(self, opentree_home: Path) -> None:
+        """init should NOT create .env.example anymore."""
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--owner", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+        env_example = opentree_home / "config" / ".env.example"
+        assert not env_example.exists()
+
+    def test_force_removes_legacy_example(self, opentree_home: Path) -> None:
+        """--force removes old .env.example if present."""
+        # First init to set up directory structure
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--owner", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+
+        # Manually create legacy .env.example
+        legacy_example = opentree_home / "config" / ".env.example"
+        legacy_example.write_text("# old\n", encoding="utf-8")
+        assert legacy_example.exists()
+
+        # Re-init with --force
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                [
+                    "init", "--non-interactive", "--force",
+                    "--bot-name", "TestBot", "--owner", "U0TEST123",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        assert not legacy_example.exists()
+
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="File permissions not reliable on Windows",
+    )
+    def test_env_defaults_has_restrictive_permissions(
+        self, opentree_home: Path
+    ) -> None:
+        """.env.defaults should have 0o600 permissions on Linux/Mac."""
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--owner", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+        env_defaults = opentree_home / "config" / ".env.defaults"
+        mode = env_defaults.stat().st_mode & 0o777
+        assert mode == 0o600
+
+
+# ------------------------------------------------------------------
+# Phase 2A: CLAUDE.md marker tests in init
+# ------------------------------------------------------------------
+
+from opentree.generator.claude_md import _AUTO_BEGIN, _AUTO_END
+
+
+class TestInitClaudeMdMarkers:
+    """init generates CLAUDE.md with AUTO markers."""
+
+    def test_init_generates_markers(self, opentree_home: Path) -> None:
+        """init should produce CLAUDE.md with AUTO:BEGIN and AUTO:END markers."""
+        result = runner.invoke(
+            app,
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
+        )
+        assert result.exit_code == 0, result.output
+
+        claude_md = opentree_home / "workspace" / "CLAUDE.md"
+        content = claude_md.read_text(encoding="utf-8")
+        assert _AUTO_BEGIN in content
+        assert _AUTO_END in content
+
+    def test_force_init_preserves_owner_content(
+        self, opentree_home: Path
+    ) -> None:
+        """force re-init should preserve owner-written content below END marker."""
+        # First init
+        result = runner.invoke(
+            app,
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
+        )
+        assert result.exit_code == 0, result.output
+
+        # Append owner content after the auto block
+        claude_md = opentree_home / "workspace" / "CLAUDE.md"
+        original = claude_md.read_text(encoding="utf-8")
+        owner_block = "\n## Owner Custom Rules\n\nDo not delete this.\n"
+        claude_md.write_text(original + owner_block, encoding="utf-8")
+
+        # Force re-init
+        result = runner.invoke(
+            app,
+            [
+                "init", "--non-interactive", "--force",
+                "--bot-name", "NewBot", "--admin-users", "U0TEST123",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        content = claude_md.read_text(encoding="utf-8")
+        # New bot name should be present
+        assert "NewBot" in content
+        # Owner content should be preserved
+        assert "## Owner Custom Rules" in content
+        assert "Do not delete this." in content
+
+
+class TestBackupStateIncludesClaudeMd:
+    """_backup_state should include CLAUDE.md in the backup."""
+
+    def test_backup_includes_claude_md(self, opentree_home: Path) -> None:
+        """_backup_state should back up CLAUDE.md when it exists."""
+        # First init to create CLAUDE.md
+        result = runner.invoke(
+            app,
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--admin-users", "U0TEST123"],
+        )
+        assert result.exit_code == 0, result.output
+
+        claude_md = opentree_home / "workspace" / "CLAUDE.md"
+        assert claude_md.exists()
+
+        # Call _backup_state directly
+        from opentree.cli.init import _backup_state
+        backup_dir = _backup_state(opentree_home)
+
+        assert backup_dir is not None
+        backup_claude_md = backup_dir / "workspace" / "CLAUDE.md"
+        assert backup_claude_md.exists()
+        assert backup_claude_md.read_text(encoding="utf-8") == claude_md.read_text(encoding="utf-8")
