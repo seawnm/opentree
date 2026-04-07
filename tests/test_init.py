@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from opentree.cli.main import app
@@ -523,9 +524,11 @@ class TestInitCommandDetection:
     def test_init_uv_run_in_source_checkout(
         self, opentree_home: Path
     ) -> None:
-        """In a source checkout (pyproject.toml exists), run.sh uses 'uv run --directory'."""
-        # Tests always run from source checkout, so no mocking needed
-        with patch("opentree.cli.init.subprocess.run") as mock_run:
+        """In a source checkout (pyproject.toml exists, not on PATH), run.sh uses 'uv run --directory'."""
+        # Tests always run from source checkout; mock shutil.which to return None
+        # so auto mode falls through to pyproject.toml detection.
+        with patch("opentree.cli.init.subprocess.run") as mock_run, \
+             patch("opentree.cli.init.shutil.which", return_value=None):
             mock_run.return_value = type("R", (), {"returncode": 0})()
             result = runner.invoke(
                 app,
@@ -534,9 +537,10 @@ class TestInitCommandDetection:
         assert result.exit_code == 0, result.output
 
         run_sh = (opentree_home / "bin" / "run.sh").read_text(encoding="utf-8")
-        bot_cmd_line = [l for l in run_sh.splitlines() if "BOT_CMD=" in l][0]
-        assert "uv run --directory" in bot_cmd_line
-        assert "opentree start" in bot_cmd_line
+        bot_cmd_lines = [l for l in run_sh.splitlines() if "BOT_CMD=" in l and "start" in l]
+        baked_line = [l for l in bot_cmd_lines if "$OPENTREE_CMD" not in l][0]
+        assert "uv run --directory" in baked_line
+        assert "opentree" in baked_line
 
     def test_init_bare_opentree_when_installed(
         self, opentree_home: Path
@@ -553,15 +557,19 @@ class TestInitCommandDetection:
         assert result.exit_code == 0, result.output
 
         run_sh = (opentree_home / "bin" / "run.sh").read_text(encoding="utf-8")
-        bot_cmd_line = [l for l in run_sh.splitlines() if "BOT_CMD=" in l][0]
-        assert bot_cmd_line.strip().startswith("BOT_CMD=(opentree start")
-        assert "uv run" not in bot_cmd_line
+        # The else branch contains the baked-in command
+        bot_cmd_lines = [l for l in run_sh.splitlines() if "BOT_CMD=" in l and "start" in l]
+        # Find the else-branch line (not the OPENTREE_CMD override line)
+        baked_line = [l for l in bot_cmd_lines if "$OPENTREE_CMD" not in l][0]
+        assert "opentree start" in baked_line
+        assert "uv run" not in baked_line
 
-    def test_init_uv_run_includes_quoted_project_root(
+    def test_init_uv_run_includes_unquoted_project_root(
         self, opentree_home: Path
     ) -> None:
-        """The uv run --directory path is single-quoted and points to project root."""
-        with patch("opentree.cli.init.subprocess.run") as mock_run:
+        """The uv run --directory path is NOT single-quoted (Issue #1 fix)."""
+        with patch("opentree.cli.init.subprocess.run") as mock_run, \
+             patch("opentree.cli.init.shutil.which", return_value=None):
             mock_run.return_value = type("R", (), {"returncode": 0})()
             result = runner.invoke(
                 app,
@@ -570,10 +578,14 @@ class TestInitCommandDetection:
         assert result.exit_code == 0, result.output
 
         run_sh = (opentree_home / "bin" / "run.sh").read_text(encoding="utf-8")
-        bot_cmd_line = [l for l in run_sh.splitlines() if "BOT_CMD=" in l][0]
-        # Path should be single-quoted for space safety
-        match = re.search(r"--directory\s+'([^']+)'", bot_cmd_line)
-        assert match is not None, f"Expected single-quoted path in: {bot_cmd_line}"
+        bot_cmd_lines = [l for l in run_sh.splitlines() if "BOT_CMD=" in l and "start" in l]
+        baked_line = [l for l in bot_cmd_lines if "$OPENTREE_CMD" not in l][0]
+        # Path should NOT be single-quoted (flow sim Issue #1)
+        assert "'" not in baked_line, (
+            f"Expected no single-quotes in: {baked_line}"
+        )
+        match = re.search(r"--directory\s+(\S+)\s+opentree", baked_line)
+        assert match is not None, f"Expected unquoted path in: {default_cmd_line}"
         project_dir = Path(match.group(1))
         assert (project_dir / "pyproject.toml").exists()
 
@@ -582,7 +594,8 @@ class TestInitCommandDetection:
     ) -> None:
         """In source checkout mode, init calls 'uv sync --extra slack'."""
         project_root = Path(__file__).resolve().parent.parent
-        with patch("opentree.cli.init.subprocess.run") as mock_run:
+        with patch("opentree.cli.init.subprocess.run") as mock_run, \
+             patch("opentree.cli.init.shutil.which", return_value=None):
             mock_run.return_value = type("R", (), {"returncode": 0})()
             result = runner.invoke(
                 app,
@@ -602,6 +615,7 @@ class TestInitCommandDetection:
     ) -> None:
         """If uv sync fails, init should warn but not abort."""
         with patch("opentree.cli.init.subprocess.run", side_effect=Exception("network error")), \
+             patch("opentree.cli.init.shutil.which", return_value=None), \
              patch("opentree.cli.init.logger") as mock_logger:
             result = runner.invoke(
                 app,
@@ -806,3 +820,120 @@ class TestBackupStateIncludesClaudeMd:
         backup_claude_md = backup_dir / "workspace" / "CLAUDE.md"
         assert backup_claude_md.exists()
         assert backup_claude_md.read_text(encoding="utf-8") == claude_md.read_text(encoding="utf-8")
+
+
+# ------------------------------------------------------------------
+# _resolve_opentree_cmd() unit tests
+# ------------------------------------------------------------------
+
+
+class TestResolveOpentreeCmd:
+    """Unit tests for _resolve_opentree_cmd() with cmd_mode parameter."""
+
+    def test_resolve_opentree_cmd_bare_mode(self) -> None:
+        """bare mode always returns ('opentree', None)."""
+        from opentree.cli.init import _resolve_opentree_cmd
+
+        cmd, root = _resolve_opentree_cmd("bare")
+        assert cmd == "opentree"
+        assert root is None
+
+    def test_resolve_opentree_cmd_auto_source_checkout(self) -> None:
+        """auto mode returns uv run in a source checkout (pyproject.toml takes priority)."""
+        from opentree.cli.init import _resolve_opentree_cmd
+
+        # We are in a source checkout, so pyproject.toml exists → uv run
+        cmd, root = _resolve_opentree_cmd("auto")
+        assert "uv run --directory" in cmd
+        assert root is not None
+        assert (root / "pyproject.toml").is_file()
+
+    def test_resolve_opentree_cmd_auto_no_source_with_which(self) -> None:
+        """auto mode falls back to shutil.which when no pyproject.toml."""
+        import opentree.cli.init as init_mod
+
+        project_root = Path(init_mod.__file__).resolve().parent.parent.parent.parent
+        pyproject = project_root / "pyproject.toml"
+        backup = project_root / "pyproject.toml.bak"
+        renamed = False
+        if pyproject.exists():
+            pyproject.rename(backup)
+            renamed = True
+        try:
+            with patch("opentree.cli.init.shutil.which", return_value="/usr/bin/opentree"):
+                cmd, root = init_mod._resolve_opentree_cmd("auto")
+        finally:
+            if renamed:
+                backup.rename(pyproject)
+        assert cmd == "opentree"
+        assert root is None
+
+    def test_resolve_opentree_cmd_auto_no_source_no_which(self) -> None:
+        """auto mode falls back to bare when no pyproject.toml and no which."""
+        import opentree.cli.init as init_mod
+
+        project_root = Path(init_mod.__file__).resolve().parent.parent.parent.parent
+        pyproject = project_root / "pyproject.toml"
+        backup = project_root / "pyproject.toml.bak"
+        renamed = False
+        if pyproject.exists():
+            pyproject.rename(backup)
+            renamed = True
+        try:
+            with patch("opentree.cli.init.shutil.which", return_value=None):
+                cmd, root = init_mod._resolve_opentree_cmd("auto")
+        finally:
+            if renamed:
+                backup.rename(pyproject)
+        assert cmd == "opentree"
+        assert root is None
+
+    def test_resolve_opentree_cmd_uv_run_with_source(self) -> None:
+        """uv-run mode returns uv run command when pyproject.toml exists."""
+        from opentree.cli.init import _resolve_opentree_cmd
+
+        cmd, root = _resolve_opentree_cmd("uv-run")
+        # We are in a source checkout
+        assert "uv run --directory" in cmd
+        assert root is not None
+        assert (root / "pyproject.toml").is_file()
+
+    def test_resolve_opentree_cmd_uv_run_no_source(self) -> None:
+        """uv-run mode falls back to bare when no pyproject.toml."""
+        import opentree.cli.init as init_mod
+
+        project_root = Path(init_mod.__file__).resolve().parent.parent.parent.parent
+        pyproject = project_root / "pyproject.toml"
+        backup = project_root / "pyproject.toml.bak"
+        renamed = False
+        if pyproject.exists():
+            pyproject.rename(backup)
+            renamed = True
+        try:
+            cmd, root = init_mod._resolve_opentree_cmd("uv-run")
+        finally:
+            if renamed:
+                backup.rename(pyproject)
+        assert cmd == "opentree"
+        assert root is None
+
+    def test_resolve_opentree_cmd_invalid_mode(self) -> None:
+        """Invalid cmd_mode raises typer.BadParameter."""
+        from opentree.cli.init import _resolve_opentree_cmd
+
+        with pytest.raises(typer.BadParameter, match="Invalid --cmd-mode"):
+            _resolve_opentree_cmd("invalid")
+
+    def test_resolve_opentree_cmd_no_quotes_in_uv_run(self) -> None:
+        """uv-run mode should NOT include single-quotes in the returned command string."""
+        from opentree.cli.init import _resolve_opentree_cmd
+
+        with patch("opentree.cli.init.shutil.which", return_value=None):
+            cmd, _ = _resolve_opentree_cmd("auto")
+        # If we're in source checkout, cmd will contain "uv run --directory"
+        if "uv run" in cmd:
+            assert "'" not in cmd, f"No single-quotes expected in: {cmd}"
+
+        cmd2, _ = _resolve_opentree_cmd("uv-run")
+        if "uv run" in cmd2:
+            assert "'" not in cmd2, f"No single-quotes expected in: {cmd2}"

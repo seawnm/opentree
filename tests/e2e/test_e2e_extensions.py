@@ -16,6 +16,7 @@ user message -> bot interprets intent -> bot calls CLI tool -> bot reports resul
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -29,7 +30,8 @@ pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 # Must match conftest.BOT_USER_ID / BOT_WALTER_HOME — duplicated here for non-fixture helpers.
 _BOT_UID = "U0APZ9MR997"
 _BOT_WALTER_HOME = Path("/mnt/e/develop/mydev/project/trees/bot_walter")
-_DOGI_DIR = Path("/mnt/e/develop/mydev/slack-bot")
+_DOGI_DIR_RAW = os.environ.get("OPENTREE_E2E_DOGI_DIR", "")
+_DOGI_DIR: Path | None = Path(_DOGI_DIR_RAW) if _DOGI_DIR_RAW else None
 
 # Subprocess timeout for direct CLI cleanup calls (not via bot).
 _CLI_TIMEOUT = 60
@@ -46,6 +48,8 @@ def _run_schedule_tool(*args: str) -> dict[str, Any]:
     Returns parsed JSON output.
     Raises RuntimeError on non-zero exit code.
     """
+    if _DOGI_DIR is None:
+        pytest.skip("OPENTREE_E2E_DOGI_DIR not set")
     cmd = [
         "uv", "run", "--directory", str(_DOGI_DIR),
         "python", "-m", "scripts.tools.schedule_tool",
@@ -71,6 +75,8 @@ def _run_requirement_tool(*args: str) -> dict[str, Any]:
     Returns parsed JSON output.
     Raises RuntimeError on non-zero exit code.
     """
+    if _DOGI_DIR is None:
+        pytest.skip("OPENTREE_E2E_DOGI_DIR not set")
     cmd = [
         "uv", "run", "--directory", str(_DOGI_DIR),
         "python", "-m", "scripts.tools.requirement_tool",

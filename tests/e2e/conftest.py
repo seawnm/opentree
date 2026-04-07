@@ -40,7 +40,8 @@ BOT_LOG_DIR = BOT_WALTER_HOME / "data" / "logs"
 BOT_HEARTBEAT_FILE = BOT_WALTER_HOME / "data" / "bot.heartbeat"
 BOT_PID_FILE = BOT_WALTER_HOME / "data" / "bot.pid"
 
-DOGI_DIR = Path("/mnt/e/develop/mydev/slack-bot")
+_DOGI_DIR_RAW = os.environ.get("OPENTREE_E2E_DOGI_DIR", "")
+DOGI_DIR: Path | None = Path(_DOGI_DIR_RAW) if _DOGI_DIR_RAW else None
 _FALLBACK_CHANNEL_ID = "C0APZHG71B8"  # ai-room (cc workspace) — last resort
 
 # ---------------------------------------------------------------------------
@@ -170,6 +171,9 @@ def _resolve_channel_id() -> str:
 
 def _load_slack_token() -> str | None:
     """Load SLACK_BOT_TOKEN from DOGI .env files without mutating os.environ."""
+    if DOGI_DIR is None:
+        return None
+
     from dotenv import dotenv_values
 
     env_path = DOGI_DIR / ".env"
@@ -227,6 +231,10 @@ def _run_message_tool(
     thread_ts: str | None = None,
 ) -> dict[str, Any]:
     """Call DOGI message-tool and return parsed JSON output."""
+    if DOGI_DIR is None:
+        raise RuntimeError(
+            "OPENTREE_E2E_DOGI_DIR env var not set — cannot call message-tool"
+        )
     cmd = [
         "uv", "run", "--directory", str(DOGI_DIR),
         "python", "-m", "scripts.tools.message_tool", "send",
@@ -252,6 +260,10 @@ def _run_message_tool(
 
 def _run_query_tool(subcommand: str, **kwargs: str) -> dict[str, Any]:
     """Call DOGI slack-query-tool and return parsed JSON output."""
+    if DOGI_DIR is None:
+        raise RuntimeError(
+            "OPENTREE_E2E_DOGI_DIR env var not set — cannot call slack-query-tool"
+        )
     cmd = [
         "uv", "run", "--directory", str(DOGI_DIR),
         "python", "-m", "scripts.tools.slack_query_tool",
@@ -323,6 +335,8 @@ def bot_mention() -> str:
 @pytest.fixture()
 def dogi_dir() -> Path:
     """Path to DOGI slack-bot project directory."""
+    if DOGI_DIR is None:
+        pytest.skip("OPENTREE_E2E_DOGI_DIR not set")
     return DOGI_DIR
 
 

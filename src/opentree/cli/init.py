@@ -89,21 +89,48 @@ def _is_interactive() -> bool:
     return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
 
-def _resolve_opentree_cmd() -> tuple[str, Path | None]:
+_VALID_CMD_MODES = {"auto", "bare", "uv-run"}
+
+
+def _resolve_opentree_cmd(cmd_mode: str = "auto") -> tuple[str, Path | None]:
     """Determine how to invoke opentree in run.sh.
 
-    Detection strategy: if a ``pyproject.toml`` exists at the computed
-    project root we are running from a source checkout and must use
-    ``uv run --directory``.  Otherwise the package is installed globally
-    and bare ``opentree`` is on PATH.
+    Detection priority (``auto`` mode):
+      1. ``pyproject.toml`` at project root → ``uv run --directory``
+      2. ``shutil.which("opentree")`` — installed on PATH → bare command
+      3. fallback → bare ``opentree``
+
+    Explicit modes:
+      - ``bare``: always use bare ``opentree`` (assumes installed)
+      - ``uv-run``: always use ``uv run --directory`` (source checkout)
 
     Returns:
         ``(command_string, project_root_or_None)``
     """
+    if cmd_mode not in _VALID_CMD_MODES:
+        raise typer.BadParameter(
+            f"Invalid --cmd-mode '{cmd_mode}'. "
+            f"Choose from: {', '.join(sorted(_VALID_CMD_MODES))}"
+        )
+
+    if cmd_mode == "bare":
+        return "opentree", None
+
     project_root = Path(__file__).resolve().parent.parent.parent.parent
+
+    if cmd_mode == "uv-run":
+        if (project_root / "pyproject.toml").is_file():
+            return f"uv run --directory {project_root} opentree", project_root
+        typer.echo("  WARNING: --cmd-mode uv-run but no pyproject.toml found; falling back to bare", err=True)
+        return "opentree", None
+
+    # cmd_mode == "auto": source checkout takes priority over PATH detection
     if (project_root / "pyproject.toml").is_file():
-        # Source checkout — always use uv run (PATH may differ at runtime)
-        return f"uv run --directory '{project_root}' opentree", project_root
+        return f"uv run --directory {project_root} opentree", project_root
+    resolved = shutil.which("opentree")
+    if resolved:
+        typer.echo(f"  Detected installed opentree: {resolved}")
+        return "opentree", None
     return "opentree", None
 
 
@@ -304,6 +331,13 @@ def init_command(
         Optional[str],
         typer.Option("--team-name", help="Team name"),
     ] = None,
+    cmd_mode: Annotated[
+        str,
+        typer.Option(
+            "--cmd-mode",
+            help="How to invoke opentree in run.sh: auto, bare, uv-run",
+        ),
+    ] = "auto",
 ) -> None:
     """Initialize an OpenTree home directory with bundled modules."""
     # Resolve --owner vs --admin-users (backward compat alias).
@@ -517,9 +551,19 @@ def init_command(
     if run_sh_template.is_file():
         content = run_sh_template.read_text(encoding="utf-8")
         content = content.replace("{{opentree_home}}", str(opentree_home))
-        opentree_cmd, project_root = _resolve_opentree_cmd()
+        opentree_cmd, project_root = _resolve_opentree_cmd(cmd_mode)
         content = content.replace("{{opentree_cmd}}", opentree_cmd)
         run_sh_path = bin_dir / "run.sh"
+
+        # Warn when --force would change the command vs existing run.sh
+        if force and run_sh_path.exists():
+            existing = run_sh_path.read_text(encoding="utf-8")
+            if opentree_cmd not in existing:
+                typer.echo(
+                    f"  \u26a0 run.sh command will change. New: {opentree_cmd}",
+                    err=True,
+                )
+
         run_sh_path.write_text(content, encoding="utf-8")
         run_sh_path.chmod(0o755)
         typer.echo(f"  Created {run_sh_path}")

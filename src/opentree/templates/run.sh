@@ -21,7 +21,14 @@ set -euo pipefail
 # ---- Configuration ----
 
 OPENTREE_HOME="{{opentree_home}}"
-BOT_CMD=({{opentree_cmd}} start --mode slack --home "$OPENTREE_HOME")
+# Override: set OPENTREE_CMD in environment to use a different command (single word).
+# Example: OPENTREE_CMD=opentree  (to use an installed package instead of uv run)
+# Default is baked in at 'opentree init' time.
+if [ -n "${OPENTREE_CMD:-}" ]; then
+    BOT_CMD=($OPENTREE_CMD start --mode slack --home "$OPENTREE_HOME")
+else
+    BOT_CMD=({{opentree_cmd}} start --mode slack --home "$OPENTREE_HOME")
+fi
 DATA_DIR="$OPENTREE_HOME/data"
 PID_FILE="$DATA_DIR/bot.pid"
 HEARTBEAT_FILE="$DATA_DIR/bot.heartbeat"

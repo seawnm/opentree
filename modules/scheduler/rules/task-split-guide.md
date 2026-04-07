@@ -31,6 +31,6 @@
 ### 怎麼拆
 
 1. 按「蒐集 -> 分析 -> 產出」的邏輯切步驟，每步控制在 20 分鐘內
-2. 每步 prompt 指定中間結果路徑：`/tmp/slack-bot/chains/{描述性名稱}/step{N}.md`
+2. 每步 prompt 指定中間結果路徑：`/tmp/opentree/chains/{描述性名稱}/step{N}.md`
 3. 下一步 prompt 指定「先讀取上一步結果」再執行
 4. 第一步用 `create`（帶 trigger），後續用 `chain-create --upstream`

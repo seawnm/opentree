@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Changed
+- **Instance 解耦** — run.sh 支援 `OPENTREE_CMD` 環境變數覆蓋 baked-in 命令，實現 instance 與 source project 完全解耦。`opentree init --cmd-mode bare` 可直接生成 bare `opentree` 命令。設計決策：[openspec/changes/20260407-decouple-instance/](openspec/changes/20260407-decouple-instance/)
+- **E2E 測試解耦** — `DOGI_DIR` 改為環境變數 `OPENTREE_E2E_DOGI_DIR`（未設定時 skip），移除對 slack-bot 的硬編碼路徑依賴
+- **Module rules 路徑** — 臨時檔案路徑從 `/tmp/slack-bot/` 統一為 `/tmp/opentree/`
+
+### Fixed
+- **run.sh uv run 路徑不再含 single-quotes** — 修復 bash 變數展開時 literal quote 導致 `uv --directory` 失敗的問題
+
 ## [0.5.0] - 2026-04-07
 
 > **Owner Freedom** — 術語替換、人設重寫、CLAUDE.md 保護、.env 分層、Reset 指令、記憶系統升級
