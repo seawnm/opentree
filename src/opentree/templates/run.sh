@@ -21,9 +21,17 @@ set -euo pipefail
 # ---- Configuration ----
 
 OPENTREE_HOME="{{opentree_home}}"
+
+# Instance Decoupling:
+#   By default, the command below is baked in at 'opentree init' time.
+#   To decouple this instance from the source project:
+#     1. Install opentree: pip install -e /path/to/opentree
+#     2. Set: export OPENTREE_CMD=opentree
+#     3. Restart this script
+#   See: docs/DEPLOYMENT.md §6 "Instance Decoupling"
+#
 # Override: set OPENTREE_CMD in environment to use a different command (single word).
 # Example: OPENTREE_CMD=opentree  (to use an installed package instead of uv run)
-# Default is baked in at 'opentree init' time.
 if [ -n "${OPENTREE_CMD:-}" ]; then
     BOT_CMD=($OPENTREE_CMD start --mode slack --home "$OPENTREE_HOME")
 else
@@ -38,20 +46,20 @@ LOG_DIR="$DATA_DIR/logs"
 EXIT_PERMANENT=42
 
 # Watchdog settings
-WATCHDOG_TIMEOUT=120          # seconds without heartbeat -> kill
-WATCHDOG_INTERVAL=30          # check frequency (seconds)
-WATCHDOG_INIT_DELAY=30        # grace period for bot to initialize
-WATCHDOG_SIGKILL_WAIT=40      # seconds after SIGTERM before SIGKILL
+WATCHDOG_TIMEOUT=120          # seconds before watchdog kills unresponsive bot
+WATCHDOG_INTERVAL=30          # how often watchdog checks heartbeat
+WATCHDOG_INIT_DELAY=30        # grace period for bot to write first heartbeat
+WATCHDOG_SIGKILL_WAIT=40      # seconds to wait after SIGTERM before SIGKILL
 
 # Crash loop protection
-MAX_CRASHES=5                 # max crashes within CRASH_WINDOW
-CRASH_WINDOW=600              # detection window (seconds)
-COOLDOWN=300                  # cooldown duration after crash loop detected
+MAX_CRASHES=5                 # crash count threshold for cooldown
+CRASH_WINDOW=600              # seconds window for crash counting (10 min)
+COOLDOWN=300                  # cooldown period after crash loop (5 min)
 
 # Network check
 DNS_HOST="slack.com"
-DNS_TIMEOUT=60                # max seconds to wait for DNS
-DNS_CHECK_INTERVAL=5          # seconds between DNS attempts
+DNS_TIMEOUT=60                # max seconds to wait for network
+DNS_CHECK_INTERVAL=5          # seconds between DNS retry attempts
 
 # ---- Functions ----
 

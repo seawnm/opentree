@@ -335,11 +335,28 @@ def init_command(
         str,
         typer.Option(
             "--cmd-mode",
-            help="How to invoke opentree in run.sh: auto, bare, uv-run",
+            help=(
+                "How to invoke opentree in run.sh. "
+                "'auto' (default): source checkout → uv run, installed → bare. "
+                "'bare': always use bare 'opentree' (requires pip install). "
+                "'uv-run': always use 'uv run --directory' (source checkout)."
+            ),
         ),
     ] = "auto",
 ) -> None:
-    """Initialize an OpenTree home directory with bundled modules."""
+    """Initialize an OpenTree home directory with bundled modules.
+
+    Creates the instance directory structure (modules/, config/, workspace/, data/)
+    and installs the pre-defined module set in topological order.
+
+    Key outputs:
+      - config/.env.defaults (bot tokens) + .env.local.example (owner keys)
+      - bin/run.sh (auto-restart, watchdog, crash loop protection)
+      - workspace/CLAUDE.md (assembled from installed modules)
+
+    Use --force to re-initialize an existing instance. On re-init, Owner-authored
+    content in CLAUDE.md is preserved via start/end markers.
+    """
     # Resolve --owner vs --admin-users (backward compat alias).
     owner_value = owner or admin_users
     if not owner_value:
