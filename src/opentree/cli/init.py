@@ -44,7 +44,9 @@ _PRE_INSTALLED = (
 # Helpers
 # ------------------------------------------------------------------
 
-# Prefixes indicating a .env placeholder (mirrors bot.py _PLACEHOLDER_PREFIXES).
+# Prefixes indicating a .env placeholder.
+# SYNC WITH: src/opentree/runner/bot.py::_PLACEHOLDER_PREFIXES
+# If you add a prefix here, you MUST add it there too (and vice versa).
 _PLACEHOLDER_PREFIXES = (
     "xoxb-your-",
     "xapp-your-",
@@ -675,6 +677,11 @@ def init_command(
             except OSError:
                 pass
             typer.echo("  Migrated config/.env -> config/.env.local")
+            typer.echo(
+                "  Hint: After confirming .env.local works, "
+                "remove config/.env to suppress legacy warnings.",
+                err=True,
+            )
 
     # Generate config/.env.defaults (bot tokens)
     env_defaults = opentree_home / "config" / ".env.defaults"

@@ -19,6 +19,8 @@ from opentree.runner.slack_api import SlackAPI
 logger = logging.getLogger(__name__)
 
 # Prefixes that indicate a .env.example placeholder value rather than a real token.
+# SYNC WITH: src/opentree/cli/init.py::_PLACEHOLDER_PREFIXES
+# If you add a prefix here, you MUST add it there too (and vice versa).
 _PLACEHOLDER_PREFIXES = (
     "xoxb-your-",
     "xapp-your-",
@@ -36,12 +38,14 @@ def _is_placeholder(value: str) -> bool:
 def _validate_not_placeholder(value: str, name: str) -> None:
     """Raise RuntimeError if *value* looks like a .env.example placeholder."""
     if _is_placeholder(value):
-        for prefix in _PLACEHOLDER_PREFIXES:
-            if value.startswith(prefix):
-                raise RuntimeError(
-                    f"{name} appears to be a placeholder (starts with '{prefix}'). "
-                    "Update your .env file."
-                )
+        matched = next(
+            (p for p in _PLACEHOLDER_PREFIXES if value.startswith(p)),
+            "<unknown prefix>",
+        )
+        raise RuntimeError(
+            f"{name} appears to be a placeholder (starts with '{matched}'). "
+            "Update your .env file."
+        )
 
 
 class Bot:
