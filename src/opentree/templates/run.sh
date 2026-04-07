@@ -39,7 +39,9 @@ else
 fi
 DATA_DIR="$OPENTREE_HOME/data"
 PID_FILE="$DATA_DIR/bot.pid"
+WRAPPER_PID_FILE="$DATA_DIR/wrapper.pid"
 HEARTBEAT_FILE="$DATA_DIR/bot.heartbeat"
+STOP_FLAG="$DATA_DIR/.stop_requested"
 LOG_DIR="$DATA_DIR/logs"
 
 # Exit code for permanent stop (no restart)
@@ -199,7 +201,7 @@ cleanup() {
     fi
 
     stop_watchdog
-    rm -f "$PID_FILE"
+    rm -f "$PID_FILE" "$WRAPPER_PID_FILE"
     log "Shutdown complete"
     exit 0
 }
@@ -207,7 +209,7 @@ cleanup() {
 # ---- Main ----
 
 trap cleanup SIGTERM SIGINT
-trap 'stop_watchdog' EXIT
+trap 'stop_watchdog; rm -f "$WRAPPER_PID_FILE"' EXIT
 
 mkdir -p "$LOG_DIR" "$DATA_DIR"
 
@@ -221,6 +223,9 @@ if ! flock -n 200; then
     exit 1
 fi
 # Lock held on fd 200 until script exits (auto-released on crash/SIGKILL too)
+
+# Write wrapper PID for external stop commands
+echo "$$" > "$WRAPPER_PID_FILE"
 
 # -- Stale process cleanup: kill orphaned bot from previous run --
 if [ -f "$PID_FILE" ]; then
@@ -250,6 +255,13 @@ crash_window_start=$(date +%s)
 log "OpenTree wrapper starting (home: $OPENTREE_HOME)"
 
 while true; do
+    # -- Stop flag check (before crash loop detection) --
+    if [ -f "$STOP_FLAG" ]; then
+        log "Stop flag detected ($STOP_FLAG). Exiting without restart."
+        rm -f "$STOP_FLAG"
+        break
+    fi
+
     # -- Crash loop detection (before network wait, so wait time doesn't mask loops) --
     now=$(date +%s)
     if [ $((now - crash_window_start)) -gt $CRASH_WINDOW ]; then

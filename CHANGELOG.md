@@ -5,8 +5,10 @@
 ## [Unreleased]
 
 ### Added
+- **`opentree stop` CLI 指令** — 安全停止 wrapper + bot（SIGTERM → 等待 → SIGKILL），支援 `--force` 和 `--timeout`。防 PID reuse 誤殺（/proc/cmdline 驗證）。設計決策：[openspec/changes/20260408-reinstall-improvements/](openspec/changes/20260408-reinstall-improvements/)
 - **`pip install .` 完全解耦** — wheel 包含 `bundled_modules/`（10 個模組），`opentree init` + `start` 可在無 source 環境運行。`_bundled_modules_dir()` 雙路徑 fallback（installed → dev layout）。設計決策：[openspec/changes/20260408-full-decouple/](openspec/changes/20260408-full-decouple/)
 - **Slack 依賴提示** — bare/installed mode 下 `opentree init` 偵測缺少 slack_bolt 時提示 `pip install 'opentree[slack]'`
+- **run.sh wrapper.pid + stop flag** — wrapper 寫入 `data/wrapper.pid` 供 `opentree stop` 定位；restart 迴圈前檢查 `.stop_requested` flag 防止重啟
 
 ### Changed
 - **Instance 解耦** — run.sh 支援 `OPENTREE_CMD` 環境變數覆蓋 baked-in 命令，實現 instance 與 source project 完全解耦。`opentree init --cmd-mode bare` 可直接生成 bare `opentree` 命令。設計決策：[openspec/changes/20260407-decouple-instance/](openspec/changes/20260407-decouple-instance/)
@@ -15,6 +17,10 @@
 - **`_resolve_opentree_cmd("auto")`** — 安裝後優先偵測 `bundled_modules/` 存在，跳過 pyproject.toml probe，避免撞到不相關的 project root
 
 ### Fixed
+- **init 缺 `data/logs/` 目錄** — nohup redirect 在 run.sh mkdir 之前執行導致靜默失敗，init 現在建立完整目錄結構
+- **legacy `.env` 遷移** — `init --force` 時自動偵測 legacy `.env` 含真實 token 並遷移到 `.env.local`，避免 placeholder 覆蓋
+- **`_load_tokens` placeholder fallback** — 三層 .env merge 後若 token 仍為 placeholder，fallback 到 legacy `.env`
+- **`_validate_not_placeholder` 雙重掃描** — 改為 `next()` 單次掃描取得 prefix 用於錯誤訊息
 - **run.sh uv run 路徑不再含 single-quotes** — 修復 bash 變數展開時 literal quote 導致 `uv --directory` 失敗的問題
 
 ## [0.5.0] - 2026-04-07

@@ -959,6 +959,39 @@ class TestInitDataLogs:
         assert result.exit_code == 0, result.output
         assert (opentree_home / "data" / "logs").is_dir()
 
+    def test_init_force_preserves_existing_logs(
+        self, opentree_home: Path
+    ) -> None:
+        """--force re-init preserves existing log files in data/logs/."""
+        # First init
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--owner", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+
+        # Place a log file
+        log_file = opentree_home / "data" / "logs" / "2026-04-08.log"
+        log_file.write_text("old log content\n", encoding="utf-8")
+
+        # Force re-init
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                [
+                    "init", "--non-interactive", "--force",
+                    "--bot-name", "TestBot", "--owner", "U0TEST123",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+
+        # Log file should still exist
+        assert log_file.exists()
+        assert log_file.read_text(encoding="utf-8") == "old log content\n"
+
 
 # ------------------------------------------------------------------
 # Fix 2: init migrates legacy .env -> .env.local
@@ -1147,6 +1180,21 @@ class TestInitLegacyEnvMigration:
 
         env_local = opentree_home / "config" / ".env.local"
         assert not env_local.exists()
+
+    def test_init_no_migrate_when_no_legacy_env(
+        self, opentree_home: Path
+    ) -> None:
+        """No legacy .env -> no .env.local created, no migration."""
+        result = runner.invoke(
+            app,
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--owner", "U0TEST123"],
+        )
+        assert result.exit_code == 0, result.output
+
+        # Should not have .env.local (only .env.defaults and .env.local.example)
+        env_local = opentree_home / "config" / ".env.local"
+        assert not env_local.exists()
+        assert "Migrated" not in result.output
 
     def test_init_migrates_env_on_force_reinit(
         self, opentree_home: Path
