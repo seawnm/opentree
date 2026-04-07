@@ -356,25 +356,38 @@ def list_modules() -> None:
 
 
 def _bundled_modules_dir() -> Path:
-    """Locate the bundled modules/ directory.
+    """Locate the bundled modules directory.
 
-    Reuses the same search logic as init.py.
+    Search order:
+      1. ``OPENTREE_BUNDLE_DIR`` env var (explicit override)
+      2. Package-relative ``bundled_modules/`` (after pip install)
+      3. Dev layout: 4 levels up → ``modules/`` (source checkout)
     """
     env = os.environ.get("OPENTREE_BUNDLE_DIR")
     if env:
         p = Path(env).resolve()
         if p.is_dir():
             return p
-    # Development layout: src/opentree/cli/module.py -> ../../../../modules
-    pkg_root = Path(__file__).resolve().parent.parent.parent.parent
-    candidate = pkg_root / "modules"
+        raise FileNotFoundError(
+            f"OPENTREE_BUNDLE_DIR={env!r} is not a valid directory."
+        )
+
+    # Installed package: opentree/bundled_modules/
+    pkg_root = Path(__file__).resolve().parent.parent  # opentree/
+    candidate = pkg_root / "bundled_modules"
     if candidate.is_dir():
         return candidate
-    msg = (
+
+    # Dev layout: project_root / modules/
+    dev_root = pkg_root.parent.parent  # project root
+    candidate = dev_root / "modules"
+    if candidate.is_dir():
+        return candidate
+
+    raise FileNotFoundError(
         "Cannot find bundled modules directory. "
-        "Set OPENTREE_BUNDLE_DIR or run from the project root."
+        "Ensure opentree is installed correctly or set OPENTREE_BUNDLE_DIR."
     )
-    raise FileNotFoundError(msg)
 
 
 def _load_bundled_manifest(module_name: str) -> dict | None:

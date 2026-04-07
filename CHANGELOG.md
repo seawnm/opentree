@@ -4,10 +4,15 @@
 
 ## [Unreleased]
 
+### Added
+- **`pip install .` 完全解耦** — wheel 包含 `bundled_modules/`（10 個模組），`opentree init` + `start` 可在無 source 環境運行。`_bundled_modules_dir()` 雙路徑 fallback（installed → dev layout）。設計決策：[openspec/changes/20260408-full-decouple/](openspec/changes/20260408-full-decouple/)
+- **Slack 依賴提示** — bare/installed mode 下 `opentree init` 偵測缺少 slack_bolt 時提示 `pip install 'opentree[slack]'`
+
 ### Changed
 - **Instance 解耦** — run.sh 支援 `OPENTREE_CMD` 環境變數覆蓋 baked-in 命令，實現 instance 與 source project 完全解耦。`opentree init --cmd-mode bare` 可直接生成 bare `opentree` 命令。設計決策：[openspec/changes/20260407-decouple-instance/](openspec/changes/20260407-decouple-instance/)
 - **E2E 測試解耦** — `DOGI_DIR` 改為環境變數 `OPENTREE_E2E_DOGI_DIR`（未設定時 skip），移除對 slack-bot 的硬編碼路徑依賴
 - **Module rules 路徑** — 臨時檔案路徑從 `/tmp/slack-bot/` 統一為 `/tmp/opentree/`
+- **`_resolve_opentree_cmd("auto")`** — 安裝後優先偵測 `bundled_modules/` 存在，跳過 pyproject.toml probe，避免撞到不相關的 project root
 
 ### Fixed
 - **run.sh uv run 路徑不再含 single-quotes** — 修復 bash 變數展開時 literal quote 導致 `uv --directory` 失敗的問題

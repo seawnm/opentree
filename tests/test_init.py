@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -937,3 +938,346 @@ class TestResolveOpentreeCmd:
         cmd2, _ = _resolve_opentree_cmd("uv-run")
         if "uv run" in cmd2:
             assert "'" not in cmd2, f"No single-quotes expected in: {cmd2}"
+
+
+# ------------------------------------------------------------------
+# Fix 1: init creates data/logs/ directory
+# ------------------------------------------------------------------
+
+
+class TestInitDataLogs:
+    """init should create data/logs/ directory."""
+
+    def test_init_creates_data_logs_directory(
+        self, opentree_home: Path
+    ) -> None:
+        """init creates data/logs/ directory."""
+        result = runner.invoke(
+            app,
+            ["init", "--non-interactive", "--bot-name", "TestBot", "--owner", "U0TEST123"],
+        )
+        assert result.exit_code == 0, result.output
+        assert (opentree_home / "data" / "logs").is_dir()
+
+
+# ------------------------------------------------------------------
+# Fix 2: init migrates legacy .env -> .env.local
+# ------------------------------------------------------------------
+
+
+class TestEnvHasRealTokens:
+    """Unit tests for _env_has_real_tokens helper."""
+
+    def test_real_tokens_returns_true(self, tmp_path: Path) -> None:
+        """File with real tokens returns True."""
+        from opentree.cli.init import _env_has_real_tokens
+
+        env = tmp_path / ".env"
+        env.write_text(
+            "SLACK_BOT_TOKEN=xoxb-1234567890-abcdef\n"
+            "SLACK_APP_TOKEN=xapp-1-abc-def\n",
+            encoding="utf-8",
+        )
+        assert _env_has_real_tokens(env) is True
+
+    def test_placeholder_tokens_returns_false(self, tmp_path: Path) -> None:
+        """File with only placeholder tokens returns False."""
+        from opentree.cli.init import _env_has_real_tokens
+
+        env = tmp_path / ".env"
+        env.write_text(
+            "SLACK_BOT_TOKEN=xoxb-your-bot-token\n"
+            "SLACK_APP_TOKEN=xapp-your-app-token\n",
+            encoding="utf-8",
+        )
+        assert _env_has_real_tokens(env) is False
+
+    def test_empty_file_returns_false(self, tmp_path: Path) -> None:
+        """Empty file returns False."""
+        from opentree.cli.init import _env_has_real_tokens
+
+        env = tmp_path / ".env"
+        env.write_text("", encoding="utf-8")
+        assert _env_has_real_tokens(env) is False
+
+    def test_comments_only_returns_false(self, tmp_path: Path) -> None:
+        """File with only comments returns False."""
+        from opentree.cli.init import _env_has_real_tokens
+
+        env = tmp_path / ".env"
+        env.write_text("# just a comment\n# another one\n", encoding="utf-8")
+        assert _env_has_real_tokens(env) is False
+
+    def test_missing_file_returns_false(self, tmp_path: Path) -> None:
+        """Non-existent file returns False."""
+        from opentree.cli.init import _env_has_real_tokens
+
+        env = tmp_path / "nonexistent"
+        assert _env_has_real_tokens(env) is False
+
+    def test_mixed_real_and_placeholder(self, tmp_path: Path) -> None:
+        """One real + one placeholder -> True (at least one real)."""
+        from opentree.cli.init import _env_has_real_tokens
+
+        env = tmp_path / ".env"
+        env.write_text(
+            "SLACK_BOT_TOKEN=xoxb-1234-real\n"
+            "SLACK_APP_TOKEN=xapp-your-app-token\n",
+            encoding="utf-8",
+        )
+        assert _env_has_real_tokens(env) is True
+
+
+class TestInitLegacyEnvMigration:
+    """init should migrate legacy .env -> .env.local when real tokens present."""
+
+    def test_init_migrates_legacy_env_to_env_local(
+        self, opentree_home: Path
+    ) -> None:
+        """Legacy .env with real tokens is copied to .env.local."""
+        # First init
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--owner", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+
+        # Place a legacy .env with real tokens
+        legacy_env = opentree_home / "config" / ".env"
+        legacy_env.write_text(
+            "SLACK_BOT_TOKEN=xoxb-1234-real-token\n"
+            "SLACK_APP_TOKEN=xapp-5678-real-token\n",
+            encoding="utf-8",
+        )
+
+        # Force re-init triggers migration
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                [
+                    "init", "--non-interactive", "--force",
+                    "--bot-name", "TestBot", "--owner", "U0TEST123",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+
+        env_local = opentree_home / "config" / ".env.local"
+        assert env_local.exists()
+        content = env_local.read_text(encoding="utf-8")
+        assert "xoxb-1234-real-token" in content
+        assert "xapp-5678-real-token" in content
+
+    def test_init_does_not_overwrite_existing_env_local(
+        self, opentree_home: Path
+    ) -> None:
+        """.env.local already exists -> no overwrite, warning emitted."""
+        # First init
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--owner", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+
+        # Place legacy .env with real tokens
+        legacy_env = opentree_home / "config" / ".env"
+        legacy_env.write_text(
+            "SLACK_BOT_TOKEN=xoxb-1234-real\nSLACK_APP_TOKEN=xapp-5678-real\n",
+            encoding="utf-8",
+        )
+        # Pre-existing .env.local
+        env_local = opentree_home / "config" / ".env.local"
+        env_local.write_text("SLACK_BOT_TOKEN=xoxb-existing\n", encoding="utf-8")
+
+        # Force re-init
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                [
+                    "init", "--non-interactive", "--force",
+                    "--bot-name", "TestBot", "--owner", "U0TEST123",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+
+        # .env.local should NOT be overwritten
+        content = env_local.read_text(encoding="utf-8")
+        assert "xoxb-existing" in content
+        assert "xoxb-1234-real" not in content
+        # Warning should appear in stderr output
+        assert "WARNING" in result.output or "already exists" in result.output
+
+    def test_init_does_not_migrate_placeholder_env(
+        self, opentree_home: Path
+    ) -> None:
+        """Legacy .env with placeholder tokens is NOT migrated."""
+        # First init
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--owner", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+
+        # Place legacy .env with placeholder tokens
+        legacy_env = opentree_home / "config" / ".env"
+        legacy_env.write_text(
+            "SLACK_BOT_TOKEN=xoxb-your-bot-token\n"
+            "SLACK_APP_TOKEN=xapp-your-app-token\n",
+            encoding="utf-8",
+        )
+
+        # Force re-init
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                [
+                    "init", "--non-interactive", "--force",
+                    "--bot-name", "TestBot", "--owner", "U0TEST123",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+
+        env_local = opentree_home / "config" / ".env.local"
+        assert not env_local.exists()
+
+    def test_init_migrates_env_on_force_reinit(
+        self, opentree_home: Path
+    ) -> None:
+        """--force re-init also triggers migration."""
+        # First init
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                ["init", "--non-interactive", "--bot-name", "TestBot", "--owner", "U0TEST123"],
+            )
+        assert result.exit_code == 0, result.output
+
+        # Create legacy .env with real tokens
+        legacy_env = opentree_home / "config" / ".env"
+        legacy_env.write_text(
+            "SLACK_BOT_TOKEN=xoxb-force-test\nSLACK_APP_TOKEN=xapp-force-test\n",
+            encoding="utf-8",
+        )
+
+        # Force re-init
+        with patch("opentree.cli.init.subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0})()
+            result = runner.invoke(
+                app,
+                [
+                    "init", "--non-interactive", "--force",
+                    "--bot-name", "TestBot", "--owner", "U0TEST123",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+
+        env_local = opentree_home / "config" / ".env.local"
+        assert env_local.exists()
+        content = env_local.read_text(encoding="utf-8")
+        assert "xoxb-force-test" in content
+
+
+# ------------------------------------------------------------------
+# _bundled_modules_dir() dual-path tests
+# ------------------------------------------------------------------
+
+
+class TestBundledModulesDir:
+    """Unit tests for _bundled_modules_dir() with installed + dev fallback."""
+
+    def test_bundled_modules_dir_env_override(self, tmp_path: Path) -> None:
+        """OPENTREE_BUNDLE_DIR set to a valid directory is used."""
+        from opentree.cli.init import _bundled_modules_dir
+
+        with patch.dict(os.environ, {"OPENTREE_BUNDLE_DIR": str(tmp_path)}):
+            result = _bundled_modules_dir()
+        assert result == tmp_path.resolve()
+
+    def test_bundled_modules_dir_env_invalid(self, tmp_path: Path) -> None:
+        """OPENTREE_BUNDLE_DIR pointing to nonexistent dir raises FileNotFoundError."""
+        from opentree.cli.init import _bundled_modules_dir
+
+        bad_path = str(tmp_path / "no_such_dir")
+        with patch.dict(os.environ, {"OPENTREE_BUNDLE_DIR": bad_path}):
+            with pytest.raises(FileNotFoundError, match="OPENTREE_BUNDLE_DIR"):
+                _bundled_modules_dir()
+
+    def test_bundled_modules_dir_installed_path(self, tmp_path: Path) -> None:
+        """When bundled_modules/ exists in pkg_root, it is returned."""
+        from opentree.cli.init import _bundled_modules_dir
+
+        # Create a fake bundled_modules dir at pkg_root level
+        pkg_root = Path(__file__).resolve().parent.parent / "src" / "opentree"
+        bundled = pkg_root / "bundled_modules"
+        bundled.mkdir(exist_ok=True)
+        try:
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("OPENTREE_BUNDLE_DIR", None)
+                result = _bundled_modules_dir()
+            assert result == bundled
+        finally:
+            bundled.rmdir()
+
+    def test_bundled_modules_dir_dev_fallback(self) -> None:
+        """When bundled_modules/ does not exist but modules/ does, dev fallback is used."""
+        from opentree.cli.init import _bundled_modules_dir
+
+        # In our source checkout, bundled_modules/ does not exist but modules/ does
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OPENTREE_BUNDLE_DIR", None)
+            result = _bundled_modules_dir()
+        expected = Path(__file__).resolve().parent.parent / "modules"
+        assert result == expected
+
+    def test_bundled_modules_dir_not_found(self, tmp_path: Path) -> None:
+        """When neither bundled_modules/ nor modules/ exist, FileNotFoundError is raised."""
+        import opentree.cli.init as init_mod
+
+        # Place __file__ in a temp location where neither candidate exists
+        fake_file = tmp_path / "src" / "opentree" / "cli" / "init.py"
+        fake_file.parent.mkdir(parents=True, exist_ok=True)
+        fake_file.touch()
+
+        original_file = init_mod.__file__
+        try:
+            init_mod.__file__ = str(fake_file)
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("OPENTREE_BUNDLE_DIR", None)
+                with pytest.raises(FileNotFoundError, match="Cannot find bundled modules"):
+                    init_mod._bundled_modules_dir()
+        finally:
+            init_mod.__file__ = original_file
+
+
+# ------------------------------------------------------------------
+# _resolve_opentree_cmd() auto mode with installed package
+# ------------------------------------------------------------------
+
+
+class TestResolveCmdAutoInstalled:
+    """When bundled_modules/ exists, auto mode returns bare command."""
+
+    def test_resolve_cmd_auto_installed(self) -> None:
+        """bundled_modules/ exists -> auto returns bare command, no pyproject.toml probe."""
+        from opentree.cli.init import _resolve_opentree_cmd
+
+        # Create a fake bundled_modules dir next to the package
+        pkg_root = Path(__file__).resolve().parent.parent / "src" / "opentree"
+        bundled = pkg_root / "bundled_modules"
+        bundled.mkdir(exist_ok=True)
+        try:
+            with patch("opentree.cli.init.shutil.which", return_value="/usr/local/bin/opentree"):
+                cmd, root = _resolve_opentree_cmd("auto")
+            assert cmd == "opentree"
+            assert root is None
+        finally:
+            bundled.rmdir()
