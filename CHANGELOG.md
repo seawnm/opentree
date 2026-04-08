@@ -17,6 +17,16 @@
 - **`_resolve_opentree_cmd("auto")`** — 安裝後優先偵測 `bundled_modules/` 存在，跳過 pyproject.toml probe，避免撞到不相關的 project root
 
 ### Fixed
+- **Permission Remediation（三層防線）** — v0.5.0 部署後所有功能靜默失敗的根因修復。設計決策：[openspec/changes/20260408-permission-remediation/](openspec/changes/20260408-permission-remediation/)
+  - **settings.json 格式修正**：`SettingsGenerator` 輸出從不合法的 `{"allowedTools": [...]}` 改為 Claude Code 規範的 `{"permissions": {"allow": [...], "deny": [...]}}`
+  - **Permission mode 支援**：`ClaudeProcess._build_claude_args()` 新增 `permission_mode` 參數。Owner 用 `--dangerously-skip-permissions`，Restricted 用 `--permission-mode dontAsk`
+  - **Dispatcher 權限傳遞**：`_process_task()` 用 `context.is_owner`（單一來源）推導 `permission_mode` 傳給 `ClaudeProcess`
+  - **Core 模組基線權限**：`modules/core/opentree.json` 新增 8 個基線工具（Read/Write/Edit/Glob/Grep/WebSearch/WebFetch/Task）
+  - **Guardrail .env deny 加固**：`modules/guardrail/opentree.json` 新增 `Read(config/.env*)` 等 deny pattern，防禦敏感檔案讀取
+  - **新用戶 memory 目錄預建**：`_build_prompt_context()` 為首次互動的用戶預先建立 memory 目錄
+  - **permission_mode 驗證**：`_build_claude_args()` 對未知 permission_mode 值記錄 warning
+  - **admin_users docstring 修正**：空 tuple 語意從「所有人都是 admin」修正為「無人有 owner 權限」
+  - **回歸測試**：新增 `test_permission_completeness.py`（18 tests）+ `test_settings_coverage.py`（6 tests）確保權限完整性
 - **init 缺 `data/logs/` 目錄** — nohup redirect 在 run.sh mkdir 之前執行導致靜默失敗，init 現在建立完整目錄結構
 - **legacy `.env` 遷移** — `init --force` 時自動偵測 legacy `.env` 含真實 token 並遷移到 `.env.local`，避免 placeholder 覆蓋
 - **`_load_tokens` placeholder fallback** — 三層 .env merge 後若 token 仍為 placeholder，fallback 到 legacy `.env`

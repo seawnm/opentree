@@ -154,6 +154,63 @@ tail -f ~/.opentree/data/logs/$(date +%Y-%m-%d).log
 grep ERROR ~/.opentree/data/logs/$(date +%Y-%m-%d).log
 ```
 
+## Stopping the Bot
+
+### 停止方式比較
+
+| 方式 | 指令 | 適用情境 | 備註 |
+|------|------|----------|------|
+| `opentree stop` CLI | `opentree stop --home ~/.opentree` | **推薦**。從終端安全停止 | 寫入 stop flag 防止 wrapper 重啟 |
+| `@Bot shutdown` | 在 Slack 發送 `@MyBot shutdown` | 從 Slack 遠端停止 | Exit code 42，wrapper 不重啟 |
+| `pkill -f` | `pkill -f "run.sh"` | 最後手段 | ⚠️ 有誤殺其他進程風險，無 stop flag 保護 |
+
+### `opentree stop` 用法
+
+```bash
+opentree stop [--home PATH] [--force] [--timeout SECONDS]
+```
+
+| 參數 | 必要 | 預設值 | 說明 |
+|------|------|--------|------|
+| `--home` | No | `~/.opentree/` 或 `OPENTREE_HOME` 環境變數 | Instance 根目錄路徑 |
+| `--force` | No | False | 逾時後發送 SIGKILL 強制終止 |
+| `--timeout` | No | 60 | 等待 graceful shutdown 的秒數 |
+
+#### 基本範例
+
+```bash
+# 使用預設 home 路徑停止
+opentree stop
+
+# 指定 home 路徑
+opentree stop --home ~/.opentree
+
+# Source checkout 模式
+uv run opentree stop --home ~/.opentree
+```
+
+#### 強制停止範例
+
+```bash
+# 等待 30 秒後強制 SIGKILL
+opentree stop --force --timeout 30
+```
+
+### 停止流程
+
+1. **讀取 PID**：從 `data/wrapper.pid` 讀取 wrapper 進程 PID（fallback 到 `data/bot.pid`）
+2. **驗證進程**：透過 `/proc/cmdline` 確認 PID 屬於 OpenTree，避免誤殺
+3. **寫入 stop flag**：在 `data/.stop_requested` 寫入標記，防止 wrapper 重啟 bot
+4. **發送 SIGTERM**：通知進程開始 graceful shutdown
+5. **等待退出**：輪詢進程狀態，最多等待 `--timeout` 秒
+6. **逾時處理**：若加了 `--force`，發送 SIGKILL 強制終止；否則提示使用者加 `--force`
+
+### 前置條件
+
+- Instance 必須已初始化（`data/` 目錄存在）
+- `data/wrapper.pid` 必須存在且記錄正確的 wrapper PID。舊版 `run.sh` 可能未寫入此檔案，執行 `opentree init --force` 可重新產生含 `wrapper.pid` 支援的 `run.sh`
+- 若 `wrapper.pid` 不存在或過期，會 fallback 到 `bot.pid`，但此時 wrapper（若仍在執行）可能會重新啟動 bot
+
 ## Instance Decoupling (--cmd-mode)
 
 The `--cmd-mode` option controls how `run.sh` invokes the `opentree` command. This determines whether an instance is tied to a source checkout or runs independently.
