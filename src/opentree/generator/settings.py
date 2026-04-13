@@ -134,8 +134,10 @@ class SettingsGenerator:
         all_deny = self._deduplicate(all_deny)
 
         return {
-            "allowedTools": all_allow,
-            "denyTools": all_deny,
+            "permissions": {
+                "allow": all_allow,
+                "deny": all_deny,
+            }
         }
 
     def write_settings(self) -> None:

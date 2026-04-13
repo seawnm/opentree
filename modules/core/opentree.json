@@ -19,7 +19,21 @@
     "description": "路由規則、路徑慣例、環境限制"
   },
   "permissions": {
-    "allow": [],
+    "allow": [
+      "Read($OPENTREE_HOME/**)",
+      "Read(//tmp/**)",
+      "Write($OPENTREE_HOME/workspace/**)",
+      "Write($OPENTREE_HOME/data/**)",
+      "Write(//tmp/**)",
+      "Edit($OPENTREE_HOME/workspace/**)",
+      "Edit($OPENTREE_HOME/data/**)",
+      "Edit(//tmp/**)",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "WebFetch",
+      "Task"
+    ],
     "deny": []
   },
   "prompt_hook": null,

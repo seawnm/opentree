@@ -27,9 +27,13 @@ class RunnerConfig:
         max_concurrent_tasks: Maximum number of parallel tasks.
         session_expiry_days: Number of days before a session expires.
         drain_timeout: Graceful shutdown drain timeout, in seconds.
-        admin_users: Slack user IDs allowed to run admin commands like
-            ``shutdown``.  Empty tuple means all users are admins
-            (backward-compatible default).
+        admin_users: Slack user IDs authorized to run admin commands
+            like ``shutdown``, ``restart``, and ``reset-bot``.
+            All users (including admins) run Claude with
+            ``--permission-mode dontAsk``; access scope is controlled
+            exclusively via ``workspace/.claude/settings.json``.
+            Empty tuple (the default) means no user can issue admin
+            commands — set at least one user ID to enable them.
         memory_extraction_enabled: Whether to extract and persist user
             memories from conversation responses.  When False, Step 11b
             (memory extraction) is skipped entirely.

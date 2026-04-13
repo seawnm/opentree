@@ -6,6 +6,8 @@
 
 ### Added
 - **`opentree stop` CLI 指令** — 安全停止 wrapper + bot（SIGTERM → 等待 → SIGKILL），支援 `--force` 和 `--timeout`。防 PID reuse 誤殺（/proc/cmdline 驗證）。設計決策：[openspec/changes/20260408-reinstall-improvements/](openspec/changes/20260408-reinstall-improvements/)
+- **docs/DEPLOYMENT.md：WSL2 watchdog 說明** — 新增 WSL2 sleep/suspend 導致 watchdog 誤殺的行為說明與 `WATCHDOG_TIMEOUT` 調整建議（2026-04-13 bot_walter 生產部署中觀察到）
+- **docs/DEPLOYMENT.md：Process manager 說明** — 明確說明 PM2 對 opentree 是冗餘的（run.sh 已有完整 daemon 機制），並提供清理 PM2 的指令。建議使用 nohup 直接啟動
 - **`pip install .` 完全解耦** — wheel 包含 `bundled_modules/`（10 個模組），`opentree init` + `start` 可在無 source 環境運行。`_bundled_modules_dir()` 雙路徑 fallback（installed → dev layout）。設計決策：[openspec/changes/20260408-full-decouple/](openspec/changes/20260408-full-decouple/)
 - **Slack 依賴提示** — bare/installed mode 下 `opentree init` 偵測缺少 slack_bolt 時提示 `pip install 'opentree[slack]'`
 - **run.sh wrapper.pid + stop flag** — wrapper 寫入 `data/wrapper.pid` 供 `opentree stop` 定位；restart 迴圈前檢查 `.stop_requested` flag 防止重啟
@@ -19,8 +21,8 @@
 ### Fixed
 - **Permission Remediation（三層防線）** — v0.5.0 部署後所有功能靜默失敗的根因修復。設計決策：[openspec/changes/20260408-permission-remediation/](openspec/changes/20260408-permission-remediation/)
   - **settings.json 格式修正**：`SettingsGenerator` 輸出從不合法的 `{"allowedTools": [...]}` 改為 Claude Code 規範的 `{"permissions": {"allow": [...], "deny": [...]}}`
-  - **Permission mode 支援**：`ClaudeProcess._build_claude_args()` 新增 `permission_mode` 參數。Owner 用 `--dangerously-skip-permissions`，Restricted 用 `--permission-mode dontAsk`
-  - **Dispatcher 權限傳遞**：`_process_task()` 用 `context.is_owner`（單一來源）推導 `permission_mode` 傳給 `ClaudeProcess`
+  - **Permission mode 支援**：`ClaudeProcess._build_claude_args()` 新增 `permission_mode` 參數（**已由 20260411 安全修復取代，見下方 Security 節**）
+  - **Dispatcher 權限傳遞**：`_process_task()` 用 `context.is_owner`（單一來源）推導 `permission_mode` 傳給 `ClaudeProcess`（**已由 20260411 安全修復取代，`permission_mode` 參數已移除**）
   - **Core 模組基線權限**：`modules/core/opentree.json` 新增 8 個基線工具（Read/Write/Edit/Glob/Grep/WebSearch/WebFetch/Task）
   - **Guardrail .env deny 加固**：`modules/guardrail/opentree.json` 新增 `Read(config/.env*)` 等 deny pattern，防禦敏感檔案讀取
   - **新用戶 memory 目錄預建**：`_build_prompt_context()` 為首次互動的用戶預先建立 memory 目錄
@@ -28,6 +30,13 @@
   - **admin_users docstring 修正**：空 tuple 語意從「所有人都是 admin」修正為「無人有 owner 權限」
   - **回歸測試**：新增 `test_permission_completeness.py`（18 tests）+ `test_settings_coverage.py`（6 tests）確保權限完整性
 - **init 缺 `data/logs/` 目錄** — nohup redirect 在 run.sh mkdir 之前執行導致靜默失敗，init 現在建立完整目錄結構
+
+### Security
+
+- **移除 `--dangerously-skip-permissions`（bypassPermissions）** — Owner 用戶不再跳過權限評估。所有使用者（含 Owner）一律採 `--permission-mode dontAsk`，`settings.json` 的 allow/deny 規則對所有人生效。`ClaudeProcess` 的 `permission_mode` 參數已移除。設計決策：[openspec/changes/20260411-owner-dontask-mode/](openspec/changes/20260411-owner-dontask-mode/)
+  - **`modules/core/opentree.json` 路徑限縮**：裸 `Read`/`Write`/`Edit` 改為 `$OPENTREE_HOME/**` 和 `//tmp/**` 範圍限制，防止讀寫工作區外的系統路徑
+  - **`modules/guardrail/opentree.json` 絕對路徑 deny 強化**：新增 `Read($OPENTREE_HOME/config/.env*)` 等 3 條絕對路徑規則，補強相對路徑 deny 的盲點
+  - ⚠️ **部署注意**：升級後必須執行 `opentree module refresh` 以重新生成 `workspace/.claude/settings.json`，否則舊的裸 `Read`/`Write`/`Edit` 規則仍會生效
 - **legacy `.env` 遷移** — `init --force` 時自動偵測 legacy `.env` 含真實 token 並遷移到 `.env.local`，避免 placeholder 覆蓋
 - **`_load_tokens` placeholder fallback** — 三層 .env merge 後若 token 仍為 placeholder，fallback 到 legacy `.env`
 - **`_validate_not_placeholder` 雙重掃描** — 改為 `next()` 單次掃描取得 prefix 用於錯誤訊息

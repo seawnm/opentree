@@ -124,8 +124,14 @@ def _build_claude_args(
         "--verbose",
         "--system-prompt",
         system_prompt,
-        "--print",
     ]
+
+    # Always use dontAsk — bypassPermissions is never used even for owner users
+    # because it silently skips all allow/deny rules in settings.json.
+    # (GitHub #12232: --allowedTools ignored; #27040: deny rules ignored)
+    args += ["--permission-mode", "dontAsk"]
+
+    args.append("--print")
 
     if session_id:
         args += ["--resume", session_id]

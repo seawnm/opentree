@@ -1,10 +1,61 @@
 # OpenTree Roadmap
 
-> 最後更新：2026-04-08
+> 最後更新：2026-04-13
 
 ---
 
 ## 近期
+
+### Permission Remediation 後續（來自 2026-04-08 反思 + E2E 推演）
+
+#### 🔴 必須做（v0.5.1 前）
+
+- [x] **pyproject.toml 版本號更新** — `0.5.0` → `0.5.1` — ✅ 2026-04-11
+- [x] **opentree.schema.json stale description 修正** — `allowedTools`/`denyTools` → `permissions.allow`/`permissions.deny` — ✅ 2026-04-11
+- [x] **部署遷移指引** — CHANGELOG `[Unreleased] ### Security` 節已加入 ⚠️ 部署注意事項（需執行 `opentree module refresh`）— ✅ 2026-04-11
+
+#### 🟡 應該做（品質 / 可靠性）
+
+- [ ] **settings.json 格式自動遷移** — bot 啟動時偵測舊 `allowedTools` 格式自動 refresh。避免依賴人工記得執行 refresh（flow-simulation.md Edge 5 Option A）（~30 min）
+- ~~[ ] **Dispatcher integration test: permission_mode 鏈路**~~ — ~~驗證 `is_owner` → `permission_mode` → `ClaudeProcess` 完整傳遞~~ **[已刪除 - obsolete]**：`permission_mode` 參數於 20260411 移除，傳遞鏈不復存在
+- [ ] **Guardrail deny pattern scope 驗證** — `Read(config/.env*)` 相對路徑在 workspace cwd 下是否正確匹配。如不生效則 deny 規則形同虛設（~45 min）
+- [ ] **記憶雙寫問題（E2E Issue #1）** — Claude Write + memory_extractor 可能雙寫。需決定權責：關 extractor 或 deny Write(**/memory.md)（~45 min）
+- [x] **Owner deny bypass 研究（E2E Issue #4）** — `--dangerously-skip-permissions` 繞過 deny list。**✅ 2026-04-11 已修復**：改用 `--permission-mode dontAsk` 完全消除 bypass，詳見 [openspec/changes/20260411-owner-dontask-mode/](openspec/changes/20260411-owner-dontask-mode/)
+- [ ] **`_build_claude_args` cwd 參數清理** — Code Review MEDIUM：cwd 傳入函數但未使用，僅供 docstring 文檔化。考慮移除或保留（~10 min）
+- [ ] **AGENTS.md ClaudeProcess 描述補充**（P2 optional）— 在 ClaudeProcess 元件說明補上「post-20260411 全員使用 `--permission-mode dontAsk`」一句（~5 min）
+
+### 開發流程改善（來自 2026-04-08 反思 · 六大遺漏模式）
+
+- [ ] **Scope-Out Impact Assessment 規範** — 任何被 scope out 的項目，必須附帶「不做的後果」。答案若為「核心功能壞掉」→ blocker 不是 backlog。寫入 openspec template 或 CONTRIBUTING.md（~20 min）
+- [ ] **部署驗收清單模板** — 標準 checklist = 新功能驗收 + 既有功能 smoke test（記憶、排程、搜尋、Slack 查詢、上傳…）+ E2E 通過（~30 min）
+- [ ] **Integration Verifier agent 角色** — 多 agent 開發流程的最後一步：站在部署後使用者視角驗證端到端功能。下次大功能開發時試行（~30 min）
+- [ ] **排程任務權限文檔化（E2E Issue #8）** — 排程任務繼承建立者權限等級（動態檢查，非建立時鎖定）。寫入 scheduler 模組文件（~15 min）
+- [x] **README / DEPLOYMENT.md permission 說明** — 說明 Owner vs Restricted 權限模型、admin_users 設定、settings.json 格式 — ✅ 2026-04-13（DEPLOYMENT.md 新增 `## Permission Model` 章節）
+- [ ] **E2E 測試：Permission 場景** — 新增 Owner/Restricted 權限行為的 E2E 測試，含：dontAsk 允許清單生效、deny 規則阻止 .env 讀取、Owner 與 Restricted 行為一致（~1-2 hr）
+
+### Permission Remediation 已完成 ✅
+
+- [x] **settings.json 格式修正** — `allowedTools` → `permissions.allow/deny`（Claude Code 規範格式）— ✅ 2026-04-08
+- [x] **Permission mode 支援** — v0.5.0 試驗階段：Owner 用 `--dangerously-skip-permissions`，Restricted 用 `--permission-mode dontAsk`；**⚠️ 已由 20260411 安全修復取代，全員改為 `--permission-mode dontAsk`（見下方 Security Fix 節）** — ✅ 2026-04-08 → 2026-04-11
+- [x] **Dispatcher 權限傳遞** — v0.5.0 實作 `is_owner` → `permission_mode` 推導；**⚠️ 已由 20260411 安全修復移除，`permission_mode` 參數已刪除，不再區分** — ✅ 2026-04-08 → 2026-04-11
+- [x] **Core 基線工具** — 新增 Read/Write/Edit/Glob/Grep/WebSearch/WebFetch/Task — ✅ 2026-04-08
+- [x] **Guardrail .env deny 加固** — `Read(config/.env*)` 等 deny pattern — ✅ 2026-04-08
+- [x] **新用戶 memory 目錄預建** — dispatcher 為首次互動用戶預建目錄 — ✅ 2026-04-08
+- [x] **permission_mode 驗證** — 未知值 warning log — ✅ 2026-04-08
+- [x] **admin_users docstring 修正** — 空 tuple 語意從「全員 admin」修正為「無人有 owner 權限」— ✅ 2026-04-08
+- [x] **回歸測試** — test_permission_completeness.py (8 tests) + test_settings_coverage.py (6 tests) — ✅ 2026-04-08
+
+### Security Fix 已完成（2026-04-11）✅
+
+- [x] **移除 `--dangerously-skip-permissions`** — 全員（含 Owner）改為 `--permission-mode dontAsk`，徹底消除 bypass — ✅ 2026-04-11
+- [x] **Core 工具路徑限縮** — `modules/core/opentree.json`：裸 Read/Write/Edit → `$OPENTREE_HOME/**` 範圍限定 — ✅ 2026-04-11
+- [x] **Guardrail 絕對路徑 deny 加固** — `modules/guardrail/opentree.json` 新增 `$OPENTREE_HOME/**/.env*` 絕對路徑 deny 規則 — ✅ 2026-04-11
+- [x] **permissions.json + settings.json 重新產生** — `bot_walter` instance 已套用新限縮規則 — ✅ 2026-04-11
+- [x] **版本號升至 v0.5.1** — ✅ 2026-04-11
+- [x] **OpenSpec 文件** — `openspec/changes/20260411-owner-dontask-mode/`（proposal.md + research.md）— ✅ 2026-04-11
+- [x] **CHANGELOG.md Security 節** — ⚠️ 部署注意：須執行 `opentree module refresh` — ✅ 2026-04-11
+- [x] **Regression tests：`TestPermissionModeUniformity`** — `test_dispatcher.py` 新增 2 個 regression tests，驗證 Owner 不再獲得特殊 CLI 權限 — ✅ 2026-04-13
+- [x] **Roadmap / DEPLOYMENT.md 文件補齊** — roadmap lines 38-39 更新為已取代狀態、新增 Security Fix 完成節、DEPLOYMENT.md Permission Model 章節 — ✅ 2026-04-13
 
 ### Bot 生命週期管理（來自 2026-04-08 reinstall 改善）
 
@@ -21,7 +72,7 @@
 
 ### 版本發布
 
-- [ ] **v0.5.1 發布** — 含 reinstall 改善（5 fixes）、pip install 解耦、instance decoupling。[Unreleased] 已有 9+ items
+- [ ] **v0.5.1 發布** — 含 reinstall 改善（5 fixes）、pip install 解耦、instance decoupling、**permission remediation（9 fixes）**。[Unreleased] 已有 18+ items
 - ~~[ ] **v0.3.1 發布**~~ — 已被 v0.5.0 取代
 
 ### 測試驗證
@@ -62,6 +113,8 @@
 
 | 日期 | 功能 | OpenSpec 路徑 |
 |------|------|---------------|
+| 2026-04-11 | Owner dontAsk Mode（安全修復） | `openspec/changes/20260411-owner-dontask-mode/` |
+| 2026-04-08 | Permission Remediation | `openspec/changes/20260408-permission-remediation/` |
 | 2026-04-08 | Bot Reinstall Improvements | `openspec/changes/20260408-reinstall-improvements/` |
 | 2026-04-08 | pip install 完全解耦 | `openspec/changes/20260408-full-decouple/` |
 | 2026-04-07 | Instance Decoupling | `openspec/changes/20260407-decouple-instance/` |

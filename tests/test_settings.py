@@ -3,9 +3,10 @@
 Covers:
 - Add module permissions: single / multiple modules
 - Remove module permissions: existing / nonexistent (idempotent)
-- Generate settings: aggregate / deduplicate / deny / empty
+- Generate settings: aggregate / deduplicate / deny / empty / user_custom
 - Placeholder resolution: $OPENTREE_HOME / backslash normalization
 - Write settings: atomic / auto-create dirs
+- Output format: settings["permissions"]["allow"] / settings["permissions"]["deny"]
 """
 
 from __future__ import annotations
@@ -121,6 +122,25 @@ class TestRemoveModulePermissions:
 class TestGenerateSettings:
     """SettingsGenerator.generate_settings() tests."""
 
+    def test_generate_settings_top_level_key_is_permissions(
+        self, generator: SettingsGenerator
+    ) -> None:
+        """generate_settings() returns {"permissions": {"allow": [...], "deny": [...]}}."""
+        generator.add_module_permissions(
+            "slack", allow=["Bash(uv run:*upload*)"], deny=["mcp__slack_send"]
+        )
+
+        settings = generator.generate_settings()
+
+        assert "permissions" in settings, (
+            "Top-level key must be 'permissions', not 'allowedTools'/'denyTools'"
+        )
+        assert "allow" in settings["permissions"]
+        assert "deny" in settings["permissions"]
+        # Old keys must NOT be present
+        assert "allowedTools" not in settings
+        assert "denyTools" not in settings
+
     def test_generate_settings_aggregates(self, generator: SettingsGenerator) -> None:
         """Merges allow patterns from two modules into a single list."""
         generator.add_module_permissions(
@@ -132,8 +152,8 @@ class TestGenerateSettings:
 
         settings = generator.generate_settings()
 
-        assert "Bash(uv run:*upload*)" in settings["allowedTools"]
-        assert "Bash(uv run:*schedule*)" in settings["allowedTools"]
+        assert "Bash(uv run:*upload*)" in settings["permissions"]["allow"]
+        assert "Bash(uv run:*schedule*)" in settings["permissions"]["allow"]
 
     def test_generate_settings_deduplicates(self, generator: SettingsGenerator) -> None:
         """Same pattern from two modules appears only once."""
@@ -146,10 +166,10 @@ class TestGenerateSettings:
 
         settings = generator.generate_settings()
 
-        assert settings["allowedTools"].count("Bash(echo:*)") == 1
+        assert settings["permissions"]["allow"].count("Bash(echo:*)") == 1
 
     def test_generate_settings_deny_included(self, generator: SettingsGenerator) -> None:
-        """Deny patterns are included in the denyTools key."""
+        """Deny patterns appear in settings["permissions"]["deny"]."""
         generator.add_module_permissions(
             "slack",
             allow=["Bash(uv run:*upload*)"],
@@ -158,15 +178,37 @@ class TestGenerateSettings:
 
         settings = generator.generate_settings()
 
-        assert "mcp__slack_send" in settings["denyTools"]
-        assert "mcp__slack_draft" in settings["denyTools"]
+        assert "mcp__slack_send" in settings["permissions"]["deny"]
+        assert "mcp__slack_draft" in settings["permissions"]["deny"]
 
     def test_generate_empty_permissions(self, generator: SettingsGenerator) -> None:
-        """No modules installed produces empty arrays."""
+        """No modules installed produces empty arrays in permissions."""
         settings = generator.generate_settings()
 
-        assert settings["allowedTools"] == []
-        assert settings["denyTools"] == []
+        assert settings["permissions"]["allow"] == []
+        assert settings["permissions"]["deny"] == []
+
+    def test_generate_user_custom_in_permissions(
+        self, generator: SettingsGenerator, opentree_home: Path
+    ) -> None:
+        """user_custom entries appear in settings["permissions"]."""
+        # Pre-populate permissions.json with user_custom entries
+        perm_path = opentree_home / "config" / "permissions.json"
+        import json as _json
+        perm_data = {
+            "version": 1,
+            "modules": {},
+            "user_custom": {
+                "allow": ["Bash(custom:*)"],
+                "deny": ["mcp__dangerous"],
+            },
+        }
+        perm_path.write_text(_json.dumps(perm_data), encoding="utf-8")
+
+        settings = generator.generate_settings()
+
+        assert "Bash(custom:*)" in settings["permissions"]["allow"]
+        assert "mcp__dangerous" in settings["permissions"]["deny"]
 
 
 # ---------------------------------------------------------------------------
@@ -190,12 +232,11 @@ class TestPlaceholderResolution:
         settings = gen.generate_settings()
 
         expected = f"Bash(uv run --directory {opentree_home}/bin:*upload*)"
-        assert expected in settings["allowedTools"]
-        assert "$OPENTREE_HOME" not in settings["allowedTools"][0]
+        assert expected in settings["permissions"]["allow"]
+        assert "$OPENTREE_HOME" not in settings["permissions"]["allow"][0]
 
     def test_resolve_backslash_normalized(self, tmp_path: Path) -> None:
         r"""Windows-style backslashes in opentree_home are normalized to forward slashes."""
-        # Simulate a Windows-like path by constructing one with backslashes
         fake_home = tmp_path / "fake_home"
         (fake_home / "config").mkdir(parents=True)
         (fake_home / "workspace").mkdir(parents=True)
@@ -210,7 +251,7 @@ class TestPlaceholderResolution:
         settings = gen.generate_settings()
 
         # No backslashes in the resolved path
-        for pattern in settings["allowedTools"]:
+        for pattern in settings["permissions"]["allow"]:
             assert "\\" not in pattern
 
 
@@ -234,8 +275,8 @@ class TestWriteSettings:
         settings_path = opentree_home / "workspace" / ".claude" / "settings.json"
         assert settings_path.exists()
         content = json.loads(settings_path.read_text(encoding="utf-8"))
-        assert "Bash(uv run:*upload*)" in content["allowedTools"]
-        assert "mcp__slack_send" in content["denyTools"]
+        assert "Bash(uv run:*upload*)" in content["permissions"]["allow"]
+        assert "mcp__slack_send" in content["permissions"]["deny"]
 
         # No leftover .tmp files
         tmp_files = list(settings_path.parent.glob("*.tmp"))

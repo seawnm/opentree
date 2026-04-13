@@ -103,14 +103,14 @@
           "items": {
             "type": "string"
           },
-          "description": "Tool patterns to add to allowedTools in .claude/settings.json"
+          "description": "Tool patterns to add to permissions.allow in .claude/settings.json"
         },
         "deny": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "Tool patterns to add to denyTools in .claude/settings.json"
+          "description": "Tool patterns to add to permissions.deny in .claude/settings.json"
         }
       }
     },

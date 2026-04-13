@@ -19,7 +19,15 @@
   },
   "permissions": {
     "allow": [],
-    "deny": []
+    "deny": [
+      "Read(config/.env*)",
+      "Read(config/.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read($OPENTREE_HOME/config/.env*)",
+      "Read($OPENTREE_HOME/**/.env)",
+      "Read($OPENTREE_HOME/**/.env.*)"
+    ]
   },
   "prompt_hook": null,
   "placeholders": {

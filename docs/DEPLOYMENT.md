@@ -301,6 +301,62 @@ These commands are sent via Slack (e.g. `@MyBot shutdown`):
 | Preserve .env.defaults | Yes | Yes |
 | Preserve modules/ source | Yes | Yes |
 
+## Permission Model
+
+### How Permissions Work
+
+All users — including Owners — run Claude Code CLI with `--permission-mode dontAsk`. This mode:
+
+- **Only allows** tools explicitly listed in `workspace/.claude/settings.json` under `permissions.allow`
+- **Automatically denies** every other tool without prompting
+- **Cannot be bypassed** by Owner users at the CLI level
+
+Permissions are compiled from installed modules (`modules/*/opentree.json`) into `config/permissions.json`, then generated into `workspace/.claude/settings.json` at init / refresh time.
+
+### Default Security Boundaries
+
+**Allow list** (from `core` module, scoped to instance home):
+
+| Pattern | Scope |
+|---------|-------|
+| `Read($OPENTREE_HOME/**)` | Read any file in instance tree |
+| `Read(//tmp/**)` | Read `/tmp/` |
+| `Write($OPENTREE_HOME/workspace/**)` | Write workspace files only |
+| `Write($OPENTREE_HOME/data/**)` | Write data dir (logs, memory) |
+| `Write(//tmp/**)` | Write `/tmp/` |
+| `Edit($OPENTREE_HOME/workspace/**)` | Edit workspace files |
+| `Edit($OPENTREE_HOME/data/**)` | Edit data dir |
+| `Edit(//tmp/**)` | Edit `/tmp/` |
+| `Glob`, `Grep`, `WebSearch`, `WebFetch`, `Task` | Unrestricted |
+
+**Deny list** (from `guardrail` module):
+
+| Pattern | Blocks |
+|---------|--------|
+| `Read($OPENTREE_HOME/config/.env*)` | Config secrets |
+| `Read($OPENTREE_HOME/**/.env)` | All nested `.env` files |
+| `Read($OPENTREE_HOME/**/.env.*)` | All nested `.env.*` variants |
+
+Additional modules (e.g. `slack`, `scheduler`) may add Bash-scoped tool patterns via their `opentree.json`.
+
+### Owner Privileges
+
+Owners have **no Claude CLI permission elevation**. They are distinguished only at the application layer:
+
+- **Slack commands**: `reset-bot`, `reset-bot-all`, `shutdown`, `restart`, `status`
+- **Config files**: `.env.local`, `.env.secrets`, `config/runner.json`
+- **CLAUDE.md**: Editable content outside `<!-- OPENTREE:AUTO:BEGIN/END -->` markers
+
+### Upgrading (v0.5.0 → v0.5.1+)
+
+If upgrading from v0.5.0, regenerate `settings.json` to apply the new path-scoped rules:
+
+```bash
+opentree module refresh
+```
+
+Without this step, the old unrestricted `Read`/`Write`/`Edit` entries remain in effect and the security fix is not activated.
+
 ## Updating
 
 ### Source checkout
@@ -399,3 +455,28 @@ rm /tmp/opentree-wrapper-*.lock
 
 - `flock` does not work on DrvFs (`/mnt/` paths). Lock files are stored in `/tmp/` (native Linux fs) to work around this
 - File permission commands like `chmod 600` may silently fail on DrvFs. Tokens are still loaded correctly but without filesystem-level protection
+- **Watchdog kills after system sleep/suspend** — WSL2 suspends when the Windows host sleeps. The bot process is frozen during this time and cannot write heartbeats. When WSL2 resumes, the watchdog sees a stale heartbeat (e.g. 120-140s old) and kills/restarts the bot. This is expected behavior — run.sh recovers correctly. If you want to reduce spurious restarts, increase `WATCHDOG_TIMEOUT` in `bin/run.sh`:
+
+  ```bash
+  # bin/run.sh — increase from default 120 to accommodate WSL2 sleep cycles
+  WATCHDOG_TIMEOUT=300
+  ```
+
+### Process manager (PM2 / systemd)
+
+opentree's `run.sh` is a self-contained daemon with auto-restart, watchdog, crash loop protection, and singleton lock — it does not require a separate process manager.
+
+**PM2 is redundant for opentree** and introduces unnecessary complexity:
+- run.sh already handles restarts better (watchdog + crash loop protection vs. simple restart count)
+- Exit code 42 semantics (permanent stop) are not honored by PM2 by default, causing it to restart the bot after a `shutdown` command
+- Double-layered restart logic can cause hard-to-debug behavior
+
+**Recommendation**: Use `nohup` directly as described in the [Starting the Bot](#starting-the-bot) section. If you need boot persistence, configure a minimal systemd unit that wraps `run.sh` — but avoid using PM2 for opentree.
+
+If you already have PM2 installed and want to clean up:
+
+```bash
+pm2 delete bot-name     # remove from PM2 list
+pm2 save                # persist the removal
+# optionally: npm uninstall -g pm2 && rm -rf ~/.pm2
+```

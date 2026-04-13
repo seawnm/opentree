@@ -609,6 +609,13 @@ class Dispatcher:
             if not is_new:
                 self._known_existing_users.add(memory_path)
 
+        # Ensure memory directory exists for first-time users
+        if is_new and memory_path:
+            try:
+                Path(memory_path).parent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass  # Best-effort; Claude's Write tool may create it anyway
+
         return PromptContext(
             user_id=task.user_id,
             user_name=name,

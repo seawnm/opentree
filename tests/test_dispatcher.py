@@ -2143,3 +2143,118 @@ class TestDispatcherMemoryExtractionEnabled:
             dispatcher._process_task(task)
 
         mock_extract.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Permission mode uniformity (security fix 2026-04-11)
+# ---------------------------------------------------------------------------
+
+class TestPermissionModeUniformity:
+    """Admin users must NOT receive special Claude CLI permission treatment.
+
+    After the 2026-04-11 security fix, --dangerously-skip-permissions was
+    removed entirely.  ClaudeProcess no longer accepts a permission_mode
+    parameter, and the dispatcher must not pass one for ANY user.
+    """
+
+    @staticmethod
+    def _make_result():
+        r = MagicMock()
+        r.is_error = False
+        r.is_timeout = False
+        r.response_text = "ok"
+        r.session_id = "sess-perm"
+        r.elapsed_seconds = 1.0
+        r.input_tokens = 10
+        r.output_tokens = 5
+        return r
+
+    def test_admin_user_no_permission_mode_kwarg(self, tmp_path):
+        """Dispatcher must not pass permission_mode to ClaudeProcess for Owner users.
+
+        Regression test: before 2026-04-11 fix, admin users triggered
+        permission_mode='owner' -> --dangerously-skip-permissions.
+        """
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        dispatcher._runner_config = RunnerConfig(admin_users=("U_ADMIN",))
+
+        task = make_task(user_id="U_ADMIN", user_name="admin")
+        task.status = TaskStatus.RUNNING
+
+        captured_kwargs: list[dict] = []
+
+        def capture_claude(**kwargs):
+            captured_kwargs.append(kwargs)
+            m = MagicMock()
+            m.run.return_value = TestPermissionModeUniformity._make_result()
+            return m
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.ClaudeProcess", side_effect=capture_claude),
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+        ):
+            dispatcher._process_task(task)
+
+        assert len(captured_kwargs) == 1
+        assert "permission_mode" not in captured_kwargs[0], (
+            "ClaudeProcess must not receive permission_mode kwarg; "
+            "--dangerously-skip-permissions was removed in the 2026-04-11 security fix"
+        )
+
+    def test_admin_and_regular_user_receive_identical_claude_kwargs(self, tmp_path):
+        """ClaudeProcess is instantiated identically for Owner and regular users.
+
+        Verifies that is_owner=True does not introduce any extra kwargs that
+        could elevate CLI permissions for the admin user.
+        """
+        admin_kwargs: list[dict] = []
+        regular_kwargs: list[dict] = []
+
+        def run_task(is_admin: bool, captured: list, tp: Path) -> None:
+            dispatcher, _, _ = _make_dispatcher(tp)
+            dispatcher._runner_config = RunnerConfig(admin_users=("U_ADMIN",))
+
+            uid = "U_ADMIN" if is_admin else "U_REGULAR"
+            task = make_task(user_id=uid, user_name="tester")
+            task.status = TaskStatus.RUNNING
+
+            def capture_claude(**kwargs):
+                captured.append(kwargs)
+                m = MagicMock()
+                m.run.return_value = MagicMock(
+                    is_error=False, is_timeout=False,
+                    response_text="ok", session_id="s",
+                    elapsed_seconds=1.0, input_tokens=1, output_tokens=1,
+                )
+                return m
+
+            with (
+                patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+                patch("opentree.runner.dispatcher.ClaudeProcess", side_effect=capture_claude),
+                patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+                patch("opentree.runner.dispatcher.cleanup_temp"),
+            ):
+                dispatcher._process_task(task)
+
+        admin_path = tmp_path / "admin"
+        admin_path.mkdir()
+        regular_path = tmp_path / "regular"
+        regular_path.mkdir()
+
+        run_task(is_admin=True, captured=admin_kwargs, tp=admin_path)
+        run_task(is_admin=False, captured=regular_kwargs, tp=regular_path)
+
+        assert len(admin_kwargs) == 1
+        assert len(regular_kwargs) == 1
+
+        # Strip user-specific fields (system_prompt, cwd, message) then compare kwarg keys.
+        # Any permission-related kwarg difference would appear here.
+        user_specific = {"system_prompt", "cwd", "message"}
+        admin_keys = set(admin_kwargs[0].keys()) - user_specific
+        regular_keys = set(regular_kwargs[0].keys()) - user_specific
+        assert admin_keys == regular_keys, (
+            f"Admin user ClaudeProcess kwargs {admin_keys} differ from "
+            f"regular user kwargs {regular_keys} — permission elevation detected"
+        )

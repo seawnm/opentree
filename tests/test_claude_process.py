@@ -304,6 +304,102 @@ class TestBuildClaudeArgs:
 
 
 # ---------------------------------------------------------------------------
+# _build_claude_args — permission_mode
+# ---------------------------------------------------------------------------
+
+class TestBuildClaudeArgsPermissionMode:
+    """Tests verifying dontAsk is always emitted (never bypassPermissions)."""
+
+    def test_never_uses_skip_permissions(self):
+        """--dangerously-skip-permissions must never appear in args."""
+        from opentree.runner.claude_process import _build_claude_args
+
+        config = _make_config()
+        args = _build_claude_args(config, system_prompt="s", cwd="/c")
+
+        assert "--dangerously-skip-permissions" not in args
+
+    def test_always_uses_dontask(self):
+        """--permission-mode dontAsk must always be present."""
+        from opentree.runner.claude_process import _build_claude_args
+
+        config = _make_config()
+        args = _build_claude_args(config, system_prompt="s", cwd="/c")
+
+        assert "--permission-mode" in args
+        idx = args.index("--permission-mode")
+        assert args[idx + 1] == "dontAsk"
+
+    def test_print_flag_always_present(self):
+        """--print flag is always present."""
+        from opentree.runner.claude_process import _build_claude_args
+
+        config = _make_config()
+        args = _build_claude_args(config, system_prompt="s", cwd="/c")
+
+        assert "--print" in args
+
+    def test_permission_mode_dontask_always_present(self):
+        """--permission-mode dontAsk is always present (no special owner path)."""
+        from opentree.runner.claude_process import _build_claude_args
+
+        config = _make_config()
+        args = _build_claude_args(config, system_prompt="s", cwd="/c")
+
+        assert "--permission-mode" in args
+        idx = args.index("--permission-mode")
+        assert args[idx + 1] == "dontAsk"
+        assert "--dangerously-skip-permissions" not in args
+
+
+# ---------------------------------------------------------------------------
+# ClaudeProcess.__init__ — permission_mode parameter
+# ---------------------------------------------------------------------------
+
+class TestClaudeProcessPermissionModeInit:
+    """Tests verifying ClaudeProcess always spawns with dontAsk permission mode."""
+
+    def test_init_no_permission_mode_attr(self):
+        """ClaudeProcess.__init__ no longer stores _permission_mode."""
+        from opentree.runner.claude_process import ClaudeProcess
+
+        cp = ClaudeProcess(
+            config=_make_config(),
+            system_prompt="sys",
+            cwd="/work",
+        )
+
+        assert not hasattr(cp, "_permission_mode")
+
+    def test_run_uses_dontask_permission_mode(self):
+        """ClaudeProcess.run() always spawns with --permission-mode dontAsk."""
+        from opentree.runner.claude_process import ClaudeProcess
+
+        lines = _make_init_lines("sess-perm")
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter(lines)
+        mock_proc.returncode = 0
+        mock_proc.pid = 99999
+        mock_proc.poll.return_value = 0
+        mock_proc.wait.return_value = 0
+
+        with patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
+            cp = ClaudeProcess(
+                config=_make_config(),
+                system_prompt="sys",
+                cwd="/work",
+            )
+            cp.run()
+
+        call_args = mock_popen.call_args
+        spawned_args = call_args[0][0]  # First positional arg = command list
+        assert "--permission-mode" in spawned_args
+        idx = spawned_args.index("--permission-mode")
+        assert spawned_args[idx + 1] == "dontAsk"
+        assert "--dangerously-skip-permissions" not in spawned_args
+
+
+# ---------------------------------------------------------------------------
 # ClaudeProcess.run — success path
 # ---------------------------------------------------------------------------
 
