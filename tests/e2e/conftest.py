@@ -193,6 +193,8 @@ def _load_slack_token() -> str | None:
 
 
 CHANNEL_ID = _resolve_channel_id()
+# Bot 名稱格式範例：Bot_BotName
+# 實際值來源：config/user.json 的 bot_name 欄位，請勿從目錄名稱推斷
 BOT_USER_ID = "U0APZ9MR997"
 BOT_MENTION = f"<@{BOT_USER_ID}>"
 

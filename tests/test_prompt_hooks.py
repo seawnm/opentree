@@ -299,3 +299,241 @@ class TestRequirementHook:
         assert notes_line[0].endswith("...")
         # 200 chars + "..." + prefix
         assert len(long_notes[:200]) == 200
+
+
+# ===========================================================================
+# Personality prompt hook tests
+# ===========================================================================
+
+import json as _json
+
+_PERSONALITY_HOOK = str(_REPO_ROOT / "modules" / "personality" / "prompt_hook.py")
+
+
+def _make_registry(tmp_path, module_names: list) -> None:
+    """Write minimal registry.json to tmp_path."""
+    registry_path = tmp_path / "registry.json"
+    registry_path.write_text(
+        _json.dumps({"modules": {name: {} for name in module_names}}),
+        encoding="utf-8",
+    )
+
+
+def _make_settings(tmp_path, allow: list) -> None:
+    """Write minimal settings.json to tmp_path/workspace/.claude/."""
+    settings_dir = tmp_path / "workspace" / ".claude"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    (settings_dir / "settings.json").write_text(
+        _json.dumps({"permissions": {"allow": allow, "deny": []}}),
+        encoding="utf-8",
+    )
+
+
+class TestIsModuleAvailable:
+    """Tests for _is_module_available() — Strategy C core logic."""
+
+    def _fn(self, tmp_path):
+        mod = _import_hook(_PERSONALITY_HOOK)
+        return mod._is_module_available
+
+    def test_memory_always_true(self, tmp_path) -> None:
+        fn = self._fn(tmp_path)
+        assert fn("memory", [], tmp_path) is True
+
+    def test_requirement_always_true(self, tmp_path) -> None:
+        fn = self._fn(tmp_path)
+        assert fn("requirement", [], tmp_path) is True
+
+    def test_youtube_always_true(self, tmp_path) -> None:
+        fn = self._fn(tmp_path)
+        assert fn("youtube", [], tmp_path) is True
+
+    def test_scheduler_with_matching_rule(self, tmp_path) -> None:
+        fn = self._fn(tmp_path)
+        allow = ["Read($HOME/**)", "Bash(uv run * schedule_tool *)"]
+        assert fn("scheduler", allow, tmp_path) is True
+
+    def test_scheduler_without_matching_rule(self, tmp_path) -> None:
+        fn = self._fn(tmp_path)
+        assert fn("scheduler", ["Bash(echo *)", "Read"], tmp_path) is False
+
+    def test_scheduler_empty_allowed(self, tmp_path) -> None:
+        fn = self._fn(tmp_path)
+        assert fn("scheduler", [], tmp_path) is False
+
+    def test_slack_with_matching_rule(self, tmp_path) -> None:
+        fn = self._fn(tmp_path)
+        assert fn("slack", ["Bash(uv run * slack_query_tool *)"], tmp_path) is True
+
+    def test_slack_without_matching_rule(self, tmp_path) -> None:
+        fn = self._fn(tmp_path)
+        # Has Bash but keyword doesn't match
+        assert fn("slack", ["Bash(uv run * schedule_tool *)"], tmp_path) is False
+
+    def test_stt_with_matching_rule(self, tmp_path) -> None:
+        fn = self._fn(tmp_path)
+        assert fn("stt", ["Bash(alloy stt transcribe *)"], tmp_path) is True
+
+    def test_unknown_module_returns_true(self, tmp_path) -> None:
+        fn = self._fn(tmp_path)
+        assert fn("new_future_module", [], tmp_path) is True
+
+
+class TestLoadInstalledModules:
+    """Tests for _load_installed_modules()."""
+
+    def _fn(self):
+        return _import_hook(_PERSONALITY_HOOK)._load_installed_modules
+
+    def test_dict_format(self, tmp_path) -> None:
+        _make_registry(tmp_path, ["memory", "slack"])
+        result = self._fn()(tmp_path)
+        assert set(result) == {"memory", "slack"}
+
+    def test_list_format(self, tmp_path) -> None:
+        registry_path = tmp_path / "registry.json"
+        registry_path.write_text(
+            _json.dumps({"modules": [{"name": "memory"}, {"name": "slack"}]}),
+            encoding="utf-8",
+        )
+        result = self._fn()(tmp_path)
+        assert set(result) == {"memory", "slack"}
+
+    def test_no_registry_file(self, tmp_path) -> None:
+        assert self._fn()(tmp_path) == []
+
+    def test_empty_modules(self, tmp_path) -> None:
+        (tmp_path / "registry.json").write_text('{"modules": {}}', encoding="utf-8")
+        assert self._fn()(tmp_path) == []
+
+    def test_missing_modules_key(self, tmp_path) -> None:
+        (tmp_path / "registry.json").write_text('{"version": 1}', encoding="utf-8")
+        assert self._fn()(tmp_path) == []
+
+    def test_list_with_missing_name(self, tmp_path) -> None:
+        (tmp_path / "registry.json").write_text(
+            _json.dumps({"modules": [{"name": "a"}, {}, {"name": "c"}]}),
+            encoding="utf-8",
+        )
+        result = self._fn()(tmp_path)
+        assert "a" in result
+        assert "c" in result
+
+
+class TestLoadAllowedTools:
+    """Tests for _load_allowed_tools()."""
+
+    def _fn(self):
+        return _import_hook(_PERSONALITY_HOOK)._load_allowed_tools
+
+    def test_normal_allow_list(self, tmp_path) -> None:
+        _make_settings(tmp_path, ["Bash(schedule_tool)", "Read"])
+        result = self._fn()(tmp_path)
+        assert result == ["Bash(schedule_tool)", "Read"]
+
+    def test_no_settings_file(self, tmp_path) -> None:
+        assert self._fn()(tmp_path) == []
+
+    def test_empty_permissions(self, tmp_path) -> None:
+        settings_dir = tmp_path / "workspace" / ".claude"
+        settings_dir.mkdir(parents=True)
+        (settings_dir / "settings.json").write_text('{"permissions": {}}', encoding="utf-8")
+        assert self._fn()(tmp_path) == []
+
+    def test_missing_permissions_key(self, tmp_path) -> None:
+        settings_dir = tmp_path / "workspace" / ".claude"
+        settings_dir.mkdir(parents=True)
+        (settings_dir / "settings.json").write_text('{"other": "data"}', encoding="utf-8")
+        assert self._fn()(tmp_path) == []
+
+    def test_allow_not_list(self, tmp_path) -> None:
+        settings_dir = tmp_path / "workspace" / ".claude"
+        settings_dir.mkdir(parents=True)
+        (settings_dir / "settings.json").write_text(
+            '{"permissions": {"allow": "invalid"}}', encoding="utf-8"
+        )
+        assert self._fn()(tmp_path) == []
+
+
+class TestBuildCapabilityLines:
+    """Tests for _build_capability_lines()."""
+
+    def _fn(self):
+        return _import_hook(_PERSONALITY_HOOK)._build_capability_lines
+
+    def test_no_installed_modules(self, tmp_path) -> None:
+        assert self._fn()([], [], tmp_path) == []
+
+    def test_installed_but_not_in_capability_map(self, tmp_path) -> None:
+        assert self._fn()(["unknown_module"], [], tmp_path) == []
+
+    def test_single_core_module(self, tmp_path) -> None:
+        result = self._fn()(["memory"], [], tmp_path)
+        assert len(result) == 3
+        assert "記憶管理" in result[1]
+
+    def test_bash_module_allowed(self, tmp_path) -> None:
+        result = self._fn()(["scheduler"], ["Bash(schedule_tool)"], tmp_path)
+        assert any("排程" in l for l in result)
+
+    def test_bash_module_blocked(self, tmp_path) -> None:
+        assert self._fn()(["scheduler"], [], tmp_path) == []
+
+    def test_output_order_follows_capability_map(self, tmp_path) -> None:
+        allow = ["Bash(schedule_tool)", "Bash(stt)"]
+        result = self._fn()(["stt", "memory", "scheduler"], allow, tmp_path)
+        items = [l for l in result if l.startswith("- ")]
+        memory_idx = next(i for i, l in enumerate(items) if "記憶" in l)
+        scheduler_idx = next(i for i, l in enumerate(items) if "排程" in l)
+        assert memory_idx < scheduler_idx
+
+
+class TestPersonalityPromptHook:
+    """Integration tests for the top-level prompt_hook()."""
+
+    def test_empty_context(self) -> None:
+        mod = _import_hook(_PERSONALITY_HOOK)
+        assert mod.prompt_hook({}) == []
+
+    def test_missing_opentree_home(self) -> None:
+        mod = _import_hook(_PERSONALITY_HOOK)
+        assert mod.prompt_hook({"user_id": "U123"}) == []
+
+    def test_empty_opentree_home(self) -> None:
+        mod = _import_hook(_PERSONALITY_HOOK)
+        assert mod.prompt_hook({"opentree_home": ""}) == []
+
+    def test_nonexistent_path(self, tmp_path) -> None:
+        mod = _import_hook(_PERSONALITY_HOOK)
+        fake = str(tmp_path / "does_not_exist")
+        result = mod.prompt_hook({"opentree_home": fake})
+        assert result == []
+
+    def test_full_setup_all_modules(self, tmp_path) -> None:
+        mod = _import_hook(_PERSONALITY_HOOK)
+        _make_registry(tmp_path, ["memory", "scheduler", "slack", "requirement", "youtube", "stt"])
+        _make_settings(tmp_path, [
+            "Bash(uv run * schedule_tool *)",
+            "Bash(uv run * slack_query_tool *)",
+            "Bash(alloy stt transcribe *)",
+        ])
+        result = mod.prompt_hook({"opentree_home": str(tmp_path)})
+        assert result[0] == "## 目前可用功能"
+        assert result[-1].startswith("（以上功能")
+        capability_lines = [l for l in result if l.startswith("- ")]
+        assert len(capability_lines) == 6
+
+    def test_partial_modules(self, tmp_path) -> None:
+        mod = _import_hook(_PERSONALITY_HOOK)
+        _make_registry(tmp_path, ["memory", "scheduler"])
+        _make_settings(tmp_path, ["Bash(uv run * schedule_tool *)"])
+        result = mod.prompt_hook({"opentree_home": str(tmp_path)})
+        assert any("記憶管理" in l for l in result)
+        assert any("排程" in l for l in result)
+        assert not any("Slack" in l for l in result)
+
+    def test_exception_in_registry_returns_empty(self, tmp_path) -> None:
+        mod = _import_hook(_PERSONALITY_HOOK)
+        (tmp_path / "registry.json").write_text("{{invalid json!!", encoding="utf-8")
+        result = mod.prompt_hook({"opentree_home": str(tmp_path)})
+        assert result == []

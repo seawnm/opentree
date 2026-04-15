@@ -19,6 +19,9 @@
 - **`_resolve_opentree_cmd("auto")`** — 安裝後優先偵測 `bundled_modules/` 存在，跳過 pyproject.toml probe，避免撞到不相關的 project root
 
 ### Fixed
+- Remove Bash `mkdir` dependency in memory-sop.md; Write tool handles directory creation natively
+- Add conditional phrasing to capability declarations in personality rules to prevent over-promising
+- Add graceful degradation guidance for tool unavailability scenarios
 - **Permission Remediation（三層防線）** — v0.5.0 部署後所有功能靜默失敗的根因修復。設計決策：[openspec/changes/20260408-permission-remediation/](openspec/changes/20260408-permission-remediation/)
   - **settings.json 格式修正**：`SettingsGenerator` 輸出從不合法的 `{"allowedTools": [...]}` 改為 Claude Code 規範的 `{"permissions": {"allow": [...], "deny": [...]}}`
   - **Permission mode 支援**：`ClaudeProcess._build_claude_args()` 新增 `permission_mode` 參數（**已由 20260411 安全修復取代，見下方 Security 節**）
