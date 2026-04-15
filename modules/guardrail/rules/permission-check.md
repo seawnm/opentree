@@ -1,3 +1,5 @@
+<!-- bot_name 由 config/user.json 的 bot_name 欄位決定，範例：Bot_BotName。
+     {{bot_name}} placeholder 在 module refresh 後自動替換為實際值。 -->
 # 權限申請流程
 
 > **高優先級規則 -- 不可跳過**
