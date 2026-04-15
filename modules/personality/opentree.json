@@ -19,7 +19,7 @@
     "allow": [],
     "deny": []
   },
-  "prompt_hook": null,
+  "prompt_hook": "prompt_hook.py",
   "placeholders": {
     "bot_name": "required"
   }
