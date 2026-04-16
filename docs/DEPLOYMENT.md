@@ -6,7 +6,15 @@ Practical guide for setting up, configuring, and running an OpenTree bot instanc
 
 - **Python 3.11+**
 - **[uv](https://docs.astral.sh/uv/)** (recommended) or pip
-- **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)** installed and authenticated
+- **[Codex CLI](https://github.com/openai/codex)** (`codex`) installed and authenticated
+- **[bubblewrap](https://github.com/containers/bubblewrap)** (`bwrap`) — kernel namespace sandbox; **required at bot startup**
+  ```bash
+  # Debian / Ubuntu / WSL2
+  sudo apt-get install bubblewrap
+
+  # Verify installation
+  bwrap --version
+  ```
 - **Slack App** with:
   - Socket Mode enabled
   - Bot Token (`xoxb-...`) with required scopes
@@ -79,7 +87,8 @@ opentree init --bot-name "MyBot" --owner U12345 --cmd-mode bare
     .claude/
       rules/                  # Symlinked module rules
       settings.json           # Merged permissions from all modules
-    CLAUDE.md                 # Generated system prompt
+    CLAUDE.md                 # Generated system prompt (Claude Code; preserved across refresh)
+    AGENTS.md                 # Generated system prompt (Codex CLI; same content, plain markers)
   data/
     logs/                     # Daily rotated log files
     memory/                   # User memory files
@@ -345,7 +354,39 @@ Owners have **no Claude CLI permission elevation**. They are distinguished only 
 
 - **Slack commands**: `reset-bot`, `reset-bot-all`, `shutdown`, `restart`, `status`
 - **Config files**: `.env.local`, `.env.secrets`, `config/runner.json`
-- **CLAUDE.md**: Editable content outside `<!-- OPENTREE:AUTO:BEGIN/END -->` markers
+- **CLAUDE.md / AGENTS.md**: Editable content outside the `OPENTREE:AUTO:BEGIN/END` markers
+
+## Sandbox (bubblewrap)
+
+All Codex CLI subprocesses run inside a **bubblewrap kernel namespace sandbox**. This provides an additional security layer independent of `settings.json` permissions.
+
+### What the sandbox does
+
+| Aspect | Behavior |
+|--------|----------|
+| Filesystem | Only `/workspace` (instance home) and `~/.codex` are visible inside the sandbox |
+| Blocked paths | `/mnt/e/` (Windows FS), `~/.ssh`, other host paths are excluded |
+| Network | Open — Codex CLI needs to reach the OpenAI API |
+| User scope | **All users including Owner** are sandboxed; no config toggle |
+| Startup check | Bot refuses to start if `bwrap` is not found on PATH |
+
+### Owner vs. non-owner filesystem access
+
+| User type | Workspace bind | Effect |
+|-----------|---------------|--------|
+| Owner | `--bind` (read-write) | Full read/write to instance workspace |
+| Non-owner | `--ro-bind` (read-only) | Read-only inside sandbox; writes to `/tmp/opentree/` still allowed |
+
+### Fail-fast on missing bwrap
+
+If `bwrap` is not installed, the bot logs an error and **refuses to start**:
+
+```
+RuntimeError: bubblewrap (bwrap) is not available. Install it with:
+  sudo apt-get install bubblewrap
+```
+
+This is intentional — running without a sandbox is not a supported fallback.
 
 ### Upgrading (v0.5.0 → v0.5.1+)
 
@@ -392,6 +433,24 @@ opentree module refresh
 
 Regenerates `settings.json`, symlinks, and CLAUDE.md without touching module source.
 
+## Runtime Configuration (`config/runner.json`)
+
+Optional JSON file for tuning bot behavior. All fields are optional — missing fields use defaults.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `codex_command` | `"codex"` | Path to the Codex CLI binary (e.g. `"/usr/local/bin/codex"`) |
+| `task_timeout` | `1800` | Max seconds per task |
+| `heartbeat_timeout` | `900` | Seconds without heartbeat before task is considered hung |
+| `max_concurrent_tasks` | `2` | Max simultaneous Codex subprocess tasks |
+| `progress_interval` | `10` | Seconds between progress Slack updates |
+| `session_expiry_days` | `180` | Days before a session context is expired |
+| `drain_timeout` | `30` | Seconds to wait for tasks to finish on graceful shutdown |
+| `admin_users` | `[]` | List of Slack User IDs with owner privileges |
+| `memory_extraction_enabled` | `true` | Enable/disable automatic memory extraction |
+
+> **Legacy alias**: The JSON key `claude_command` is still accepted as a fallback for `codex_command`.
+
 ## Environment Variables Reference
 
 | Variable | Description | Default |
@@ -404,6 +463,12 @@ Regenerates `settings.json`, symlinks, and CLAUDE.md without touching module sou
 ## Troubleshooting
 
 ### Bot not starting
+
+0. **`bubblewrap (bwrap) is not available`** — Install bubblewrap:
+   ```bash
+   sudo apt-get install bubblewrap
+   bwrap --version   # should print a version number
+   ```
 
 1. Check tokens are set and not placeholder values:
    ```bash

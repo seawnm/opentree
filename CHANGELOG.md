@@ -5,6 +5,8 @@
 ## [Unreleased]
 
 ### Added
+- **Codex CLI runtime** — `codex_process.py` replaces `claude_process.py` as the subprocess backend. `CodexProcess.run()` returns the same `ClaudeResult` dataclass, keeping the dispatcher interface identical. `codex_stream_parser.py` parses Codex `--json` JSONL events (`thread.started`, `item.started/completed`, `turn.completed`). Design: [openspec/changes/20260416-codex-migration/](openspec/changes/20260416-codex-migration/)
+- **AGENTS.md generator** — `generate_agents_md()` in `generator/claude_md.py` produces `workspace/AGENTS.md` (Codex system prompt carrier) using plain `# OPENTREE:AUTO:BEGIN/END` markers (not HTML comments). Owner content outside the markers is preserved across refresh. `_write_codex_config_trust()` in `cli/init.py` idempotently adds the workspace to `~/.codex/config.toml` as a trusted project.
 - **`opentree stop` CLI 指令** — 安全停止 wrapper + bot（SIGTERM → 等待 → SIGKILL），支援 `--force` 和 `--timeout`。防 PID reuse 誤殺（/proc/cmdline 驗證）。設計決策：[openspec/changes/20260408-reinstall-improvements/](openspec/changes/20260408-reinstall-improvements/)
 - **docs/DEPLOYMENT.md：WSL2 watchdog 說明** — 新增 WSL2 sleep/suspend 導致 watchdog 誤殺的行為說明與 `WATCHDOG_TIMEOUT` 調整建議（2026-04-13 bot_walter 生產部署中觀察到）
 - **docs/DEPLOYMENT.md：Process manager 說明** — 明確說明 PM2 對 opentree 是冗餘的（run.sh 已有完整 daemon 機制），並提供清理 PM2 的指令。建議使用 nohup 直接啟動
@@ -13,6 +15,7 @@
 - **run.sh wrapper.pid + stop flag** — wrapper 寫入 `data/wrapper.pid` 供 `opentree stop` 定位；restart 迴圈前檢查 `.stop_requested` flag 防止重啟
 
 ### Changed
+- **Dispatcher uses Codex CLI** — `dispatcher.py` now imports `CodexProcess` instead of `ClaudeProcess`. `sandboxed=True, is_owner=...` flags are forwarded from task context. `config.py` renames the primary field to `codex_command: str = "codex"`; the `claude_command` property returns `codex_command` as a deprecated alias for backward-compatible JSON configs. Design: [openspec/changes/20260416-codex-migration/](openspec/changes/20260416-codex-migration/)
 - **Instance 解耦** — run.sh 支援 `OPENTREE_CMD` 環境變數覆蓋 baked-in 命令，實現 instance 與 source project 完全解耦。`opentree init --cmd-mode bare` 可直接生成 bare `opentree` 命令。設計決策：[openspec/changes/20260407-decouple-instance/](openspec/changes/20260407-decouple-instance/)
 - **E2E 測試解耦** — `DOGI_DIR` 改為環境變數 `OPENTREE_E2E_DOGI_DIR`（未設定時 skip），移除對 slack-bot 的硬編碼路徑依賴
 - **Module rules 路徑** — 臨時檔案路徑從 `/tmp/slack-bot/` 統一為 `/tmp/opentree/`
@@ -36,6 +39,12 @@
 
 ### Security
 
+- **Sandboxed Bash execution (bwrap)** — All Claude CLI subprocesses now execute inside
+  a bubblewrap (bwrap) kernel namespace sandbox. Mount isolation restricts filesystem
+  access to /workspace and ~/.claude only. /mnt/e/ (Windows FS), ~/.ssh, and other
+  sensitive paths are excluded. Zero-trust design: sandbox applies to all users including
+  owner. Bot refuses to start if bwrap is unavailable. Network remains open for Claude API.
+  Design: [openspec/changes/20260416-sandboxed-bash/](openspec/changes/20260416-sandboxed-bash/)
 - **移除 `--dangerously-skip-permissions`（bypassPermissions）** — Owner 用戶不再跳過權限評估。所有使用者（含 Owner）一律採 `--permission-mode dontAsk`，`settings.json` 的 allow/deny 規則對所有人生效。`ClaudeProcess` 的 `permission_mode` 參數已移除。設計決策：[openspec/changes/20260411-owner-dontask-mode/](openspec/changes/20260411-owner-dontask-mode/)
   - **`modules/core/opentree.json` 路徑限縮**：裸 `Read`/`Write`/`Edit` 改為 `$OPENTREE_HOME/**` 和 `//tmp/**` 範圍限制，防止讀寫工作區外的系統路徑
   - **`modules/guardrail/opentree.json` 絕對路徑 deny 強化**：新增 `Read($OPENTREE_HOME/config/.env*)` 等 3 條絕對路徑規則，補強相對路徑 deny 的盲點
