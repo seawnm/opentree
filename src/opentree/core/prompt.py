@@ -126,6 +126,7 @@ class PromptContext:
     memory_path: str = ""
     is_new_user: bool = False
     is_owner: bool = False
+    is_sandboxed: bool = False
     thread_participants: tuple[str, ...] = ()
     opentree_home: str = ""
 
@@ -142,6 +143,7 @@ class PromptContext:
             "memory_path": self.memory_path,
             "is_new_user": self.is_new_user,
             "is_owner": self.is_owner,
+            "is_sandboxed": self.is_sandboxed,
             "is_admin": self.is_owner,  # backward compat alias
             "thread_participants": list(self.thread_participants),
             "opentree_home": self.opentree_home,
@@ -169,15 +171,26 @@ def build_config_block(config: UserConfig) -> list[str]:
     return [f"Bot：{bot}"]
 
 
-def build_paths_block(config: UserConfig) -> list[str]:
+def build_paths_block(
+    config: UserConfig,
+    sandboxed: bool = False,
+) -> list[str]:
     """Unified path block (always forward slashes)."""
     home = config.opentree_home.replace("\\", "/")
-    return [
+    lines = [
         f"OPENTREE_HOME：{home}",
         f"模組目錄：{home}/modules/",
         f"工作區目錄：{home}/workspace/",
         f"資料目錄：{home}/data/",
     ]
+    if sandboxed:
+        lines.extend(
+            [
+                "工作區目錄（沙箱內）：/workspace（可讀寫）",
+                "注意：沙箱外的路徑（/mnt/e/、~/ 等）在此環境不可見",
+            ]
+        )
+    return lines
 
 
 def build_identity_block(context: PromptContext) -> list[str]:
@@ -378,7 +391,7 @@ def assemble_system_prompt(
     blocks: list[list[str]] = [
         build_date_block(),
         build_config_block(config),
-        build_paths_block(config),
+        build_paths_block(config, sandboxed=context.is_sandboxed),
         build_identity_block(context),
         build_channel_block(context),
         collect_module_prompts(opentree_home, registry, context),

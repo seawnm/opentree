@@ -218,6 +218,12 @@ class TestBuildPromptContext:
         expected = dispatcher._user_config.team_name or "default"
         assert ctx.workspace == expected
 
+    def test_context_is_always_sandboxed(self, tmp_path):
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        task = make_task()
+        ctx = dispatcher._build_prompt_context(task)
+        assert ctx.is_sandboxed is True
+
 
 # ---------------------------------------------------------------------------
 # dispatch
@@ -2258,3 +2264,38 @@ class TestPermissionModeUniformity:
             f"Admin user CodexProcess kwargs {admin_keys} differ from "
             f"regular user kwargs {regular_keys} — permission elevation detected"
         )
+
+    def test_dispatcher_always_passes_sandboxed_true(self, tmp_path):
+        """All users must execute inside the sandbox."""
+        dispatcher, _, _ = _make_dispatcher(tmp_path)
+        dispatcher._runner_config = RunnerConfig(admin_users=("U_ADMIN",))
+
+        task = make_task(user_id="U_ADMIN", user_name="admin")
+        task.status = TaskStatus.RUNNING
+
+        captured_kwargs: list[dict] = []
+
+        def capture_claude(**kwargs):
+            captured_kwargs.append(kwargs)
+            m = MagicMock()
+            m.run.return_value = MagicMock(
+                is_error=False,
+                is_timeout=False,
+                response_text="ok",
+                session_id="sess-sandbox",
+                elapsed_seconds=1.0,
+                input_tokens=1,
+                output_tokens=1,
+            )
+            return m
+
+        with (
+            patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
+            patch("opentree.runner.dispatcher.CodexProcess", side_effect=capture_claude),
+            patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
+            patch("opentree.runner.dispatcher.cleanup_temp"),
+        ):
+            dispatcher._process_task(task)
+
+        assert len(captured_kwargs) == 1
+        assert captured_kwargs[0]["sandboxed"] is True

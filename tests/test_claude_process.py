@@ -398,6 +398,32 @@ class TestClaudeProcessPermissionModeInit:
         assert spawned_args[idx + 1] == "dontAsk"
         assert "--dangerously-skip-permissions" not in spawned_args
 
+    def test_run_wraps_args_with_bwrap_when_sandboxed(self):
+        """sandboxed=True should prepend a bwrap launcher before Popen."""
+        from opentree.runner.claude_process import ClaudeProcess
+
+        lines = _make_init_lines("sess-sandbox")
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter(lines)
+        mock_proc.returncode = 0
+        mock_proc.pid = 88888
+        mock_proc.poll.return_value = 0
+        mock_proc.wait.return_value = 0
+
+        with (
+            patch("opentree.runner.claude_process.build_bwrap_args", return_value=["bwrap", "--", "claude"]),
+            patch("subprocess.Popen", return_value=mock_proc) as mock_popen,
+        ):
+            cp = ClaudeProcess(
+                config=_make_config(),
+                system_prompt="sys",
+                cwd="/work",
+                sandboxed=True,
+            )
+            cp.run()
+
+        assert mock_popen.call_args[0][0][0] == "bwrap"
+
 
 # ---------------------------------------------------------------------------
 # ClaudeProcess.run — success path

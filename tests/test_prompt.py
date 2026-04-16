@@ -95,6 +95,7 @@ class TestPromptContext:
         assert ctx.team_name == ""
         assert ctx.memory_path == ""
         assert ctx.is_new_user is False
+        assert ctx.is_sandboxed is False
         assert ctx.thread_participants == ()
         assert ctx.opentree_home == ""
 
@@ -117,6 +118,7 @@ class TestPromptContext:
             "memory_path",
             "is_new_user",
             "is_owner",
+            "is_sandboxed",
             "is_admin",
             "thread_participants",
             "opentree_home",
@@ -199,6 +201,12 @@ class TestBuildPathsBlock:
         assert "modules/" in lines[1]
         assert "workspace/" in lines[2]
         assert "data/" in lines[3]
+
+    def test_build_paths_block_sandboxed_content(self) -> None:
+        config = UserConfig(opentree_home="/home/user/.opentree")
+        lines = build_paths_block(config, sandboxed=True)
+        assert "工作區目錄（沙箱內）：/workspace（可讀寫）" in lines
+        assert "注意：沙箱外的路徑（/mnt/e/、~/ 等）在此環境不可見" in lines
 
 
 # ------------------------------------------------------------------ #
@@ -348,6 +356,7 @@ class TestAssembleSystemPrompt:
         assert "U123" in result
         # Should contain module hook output
         assert "Module Hook Output" in result
+        assert "/workspace（可讀寫）" not in result
         # Should end with newline
         assert result.endswith("\n")
 
@@ -361,6 +370,14 @@ class TestAssembleSystemPrompt:
         assert "OPENTREE_HOME" in result
         assert "Asia/Taipei" in result
         assert result.endswith("\n")
+
+    def test_sandboxed_context_adds_workspace_alias(self, tmp_path: Path) -> None:
+        registry = RegistryData(version=1, modules=())
+        config = UserConfig(bot_name="EmptyBot", opentree_home=str(tmp_path))
+        ctx = PromptContext(is_sandboxed=True)
+        result = assemble_system_prompt(tmp_path, registry, config, ctx)
+        assert "工作區目錄（沙箱內）：/workspace（可讀寫）" in result
+        assert "沙箱外的路徑（/mnt/e/、~/ 等）在此環境不可見" in result
 
 
 # ------------------------------------------------------------------ #

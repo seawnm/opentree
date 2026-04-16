@@ -20,7 +20,7 @@ import typer
 
 from opentree.core.config import UserConfig, load_user_config
 from opentree.core.placeholders import PlaceholderEngine
-from opentree.generator.claude_md import ClaudeMdGenerator
+from opentree.generator.claude_md import ClaudeMdGenerator, generate_agents_md
 from opentree.generator.settings import SettingsGenerator
 from opentree.generator.symlinks import SymlinkManager
 from opentree.manifest.validator import ManifestValidator
@@ -295,9 +295,16 @@ def _backup_state(opentree_home: Path) -> Path | None:
     perm_path = opentree_home / "config" / "permissions.json"
     settings_path = opentree_home / "workspace" / ".claude" / "settings.json"
     claude_md_path = opentree_home / "workspace" / "CLAUDE.md"
+    agents_md_path = opentree_home / "workspace" / "AGENTS.md"
     rules_dir = opentree_home / "workspace" / ".claude" / "rules"
 
-    for src in (reg_path, perm_path, settings_path, claude_md_path):
+    for src in (
+        reg_path,
+        perm_path,
+        settings_path,
+        claude_md_path,
+        agents_md_path,
+    ):
         if src.exists():
             dest = backup_dir / src.relative_to(opentree_home)
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -329,6 +336,39 @@ def _restore_state(opentree_home: Path, backup_dir: Path) -> None:
         if final_rules.exists():
             shutil.rmtree(final_rules)
         shutil.copytree(backup_rules, final_rules)
+
+
+def _write_codex_config_trust(workspace_dir: Path) -> None:
+    """Ensure ``~/.codex/config.toml`` trusts the given workspace."""
+    config_path = Path.home() / ".codex" / "config.toml"
+    workspace_path = str(workspace_dir.resolve())
+    section_header = f'[projects."{workspace_path}"]'
+    trust_line = 'trust_level = "trusted"'
+
+    try:
+        existing = config_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        existing = ""
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("Failed to read Codex config %s: %s", config_path, exc)
+        return
+
+    if section_header in existing:
+        return
+
+    block = f"{section_header}\n{trust_line}\n"
+    if existing and not existing.endswith("\n"):
+        updated = existing + "\n\n" + block
+    elif existing:
+        updated = existing + "\n" + block
+    else:
+        updated = block
+
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(updated, encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Failed to write Codex config %s: %s", config_path, exc)
 
 
 # ------------------------------------------------------------------
@@ -595,6 +635,23 @@ def init_command(
                     gen.generate(opentree_home, reg_data, config)
                 )
             claude_md.write_text(content, encoding="utf-8")
+
+            # Generate AGENTS.md for Codex CLI (same content as CLAUDE.md,
+            # Codex-compatible markers)
+            agents_md = opentree_home / "workspace" / "AGENTS.md"
+            existing_agents = None
+            if force and agents_md.exists():
+                try:
+                    existing_agents = agents_md.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    pass
+            agents_content = generate_agents_md(
+                opentree_home, reg_data, config, existing_agents
+            )
+            agents_md.write_text(agents_content, encoding="utf-8")
+
+            # Register workspace as trusted in ~/.codex/config.toml
+            _write_codex_config_trust(opentree_home / "workspace")
 
     except typer.Exit:
         raise

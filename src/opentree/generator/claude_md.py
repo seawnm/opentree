@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 _AUTO_BEGIN = "<!-- OPENTREE:AUTO:BEGIN -->"
 _AUTO_END = "<!-- OPENTREE:AUTO:END -->"
 _OWNER_HINT = "\n<!-- 以下為 Owner 自訂區塊，module 安裝/更新/refresh 不會覆蓋 -->\n"
+_AGENTS_AUTO_BEGIN = "# OPENTREE:AUTO:BEGIN"
+_AGENTS_AUTO_END = "# OPENTREE:AUTO:END"
+_AGENTS_OWNER_HINT = "# (auto-generated — edit below this line)\n"
 
 
 @dataclass(frozen=True)
@@ -274,3 +277,54 @@ class ClaudeMdGenerator:
 
         engine = PlaceholderEngine(config)
         return engine.resolve_content(content)
+
+
+def generate_agents_md(
+    opentree_home: Path,
+    registry: RegistryData,
+    config: UserConfig,
+    existing_content: str | None = None,
+) -> str:
+    """Generate AGENTS.md content for Codex CLI.
+
+    AGENTS.md is Codex's equivalent of CLAUDE.md — it is read as the
+    agent instructions file. The content body matches CLAUDE.md but uses
+    plain ``# OPENTREE:AUTO:BEGIN`` / ``# OPENTREE:AUTO:END`` markers.
+    """
+    generator = ClaudeMdGenerator()
+    auto_content = _wrap_agents_markers(
+        generator.generate(opentree_home, registry, config)
+    )
+
+    if existing_content is None:
+        return auto_content
+
+    begin_idx = existing_content.find(_AGENTS_AUTO_BEGIN)
+    end_idx = (
+        existing_content.find(_AGENTS_AUTO_END, begin_idx)
+        if begin_idx != -1
+        else -1
+    )
+
+    if begin_idx == -1 or end_idx == -1:
+        logger.warning(
+            "AGENTS.md has no AUTO markers, treating entire content as owner content"
+        )
+        return auto_content + "\n" + existing_content
+
+    owner_content = existing_content[end_idx + len(_AGENTS_AUTO_END) :]
+    owner_content = owner_content.replace(_AGENTS_OWNER_HINT, "")
+
+    if owner_content.strip():
+        return auto_content + "\n" + owner_content
+    return auto_content
+
+
+def _wrap_agents_markers(content: str) -> str:
+    """Wrap generated AGENTS.md content with Codex-compatible markers."""
+    return (
+        f"{_AGENTS_AUTO_BEGIN}\n"
+        f"{content}\n"
+        f"{_AGENTS_AUTO_END}\n"
+        f"{_AGENTS_OWNER_HINT}"
+    )

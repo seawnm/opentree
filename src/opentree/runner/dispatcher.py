@@ -322,6 +322,7 @@ class Dispatcher:
             context = self._build_prompt_context(
                 task, user_name=resolved_name, display_name=display_name,
             )
+            is_owner = context.is_owner
 
             # Step 6: assemble system prompt.
             system_prompt = assemble_system_prompt(
@@ -349,6 +350,8 @@ class Dispatcher:
                     session_id=session_id,
                     message=message,
                     progress_callback=_tracking_callback,
+                    sandboxed=True,
+                    is_owner=is_owner,
                 )
                 result = claude.run()
 
@@ -628,6 +631,7 @@ class Dispatcher:
             memory_path=memory_path,
             is_new_user=is_new,
             is_owner=is_owner,
+            is_sandboxed=True,
             thread_participants=tuple(participants),
             opentree_home=str(self._home),
         )

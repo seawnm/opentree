@@ -8,9 +8,11 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Optional
 
 from opentree.runner.config import RunnerConfig
+from opentree.runner.sandbox_launcher import build_bwrap_args
 from opentree.runner.stream_parser import StreamParser
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,7 @@ _ENV_WHITELIST: frozenset[str] = frozenset(
         "AWS_REGION",
         "AWS_DEFAULT_REGION",
         "CLAUDE_CONFIG_DIR",
+        "SANDBOX_WORKSPACE",
         "TMPDIR",
         "TMP",
         "TEMP",
@@ -168,6 +171,8 @@ class ClaudeProcess:
         message: str = "",
         progress_callback: Optional[Callable] = None,
         extra_env: Optional[dict[str, str]] = None,
+        sandboxed: bool = False,
+        is_owner: bool = False,
     ) -> None:
         self._config = config
         self._system_prompt = system_prompt
@@ -176,6 +181,8 @@ class ClaudeProcess:
         self._message = message
         self._progress_callback = progress_callback
         self._extra_env = extra_env
+        self._sandboxed = sandboxed
+        self._is_owner = is_owner
 
         self._parser = StreamParser()
         self._process: Optional[subprocess.Popen] = None
@@ -193,13 +200,21 @@ class ClaudeProcess:
         Spawns the subprocess, starts reader and monitor threads, then waits
         for completion.  Returns a :class:`ClaudeResult` in all cases.
         """
+        cli_cwd = "/workspace" if self._sandboxed else self._cwd
         args = _build_claude_args(
             self._config,
             self._system_prompt,
-            self._cwd,
+            cli_cwd,
             session_id=self._session_id,
             message=self._message,
         )
+        if self._sandboxed:
+            args = build_bwrap_args(
+                args,
+                self._cwd,
+                os.environ.get("HOME", str(Path.home())),
+                owner=self._is_owner,
+            )
         env = _build_safe_env(self._extra_env)
 
         start_time = time.monotonic()

@@ -14,6 +14,7 @@ from typing import Callable, Optional
 from opentree.runner.claude_process import ClaudeResult
 from opentree.runner.codex_stream_parser import StreamParser
 from opentree.runner.config import RunnerConfig
+from opentree.runner.sandbox_launcher import build_bwrap_args
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ _ENV_WHITELIST: frozenset[str] = frozenset(
         "TERM",
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
+        "SANDBOX_WORKSPACE",
         "TMPDIR",
         "TMP",
         "TEMP",
@@ -171,6 +173,8 @@ class CodexProcess:
         message: str = "",
         progress_callback: Optional[Callable] = None,
         extra_env: Optional[dict[str, str]] = None,
+        sandboxed: bool = False,
+        is_owner: bool = False,
     ) -> None:
         self._config = config
         self._system_prompt = system_prompt
@@ -179,6 +183,8 @@ class CodexProcess:
         self._message = message
         self._progress_callback = progress_callback
         self._extra_env = extra_env
+        self._sandboxed = sandboxed
+        self._is_owner = is_owner
 
         self._parser = StreamParser()
         self._process: Optional[subprocess.Popen] = None
@@ -202,13 +208,21 @@ class CodexProcess:
                 elapsed_seconds=time.monotonic() - start_time,
             )
 
+        cli_cwd = "/workspace" if self._sandboxed else self._cwd
         args = _build_codex_args(
             self._config,
             self._system_prompt,
-            self._cwd,
+            cli_cwd,
             session_id=self._session_id,
             message=self._message,
         )
+        if self._sandboxed:
+            args = build_bwrap_args(
+                args,
+                self._cwd,
+                os.environ.get("HOME", str(Path.home())),
+                owner=self._is_owner,
+            )
         env = _build_safe_env(self._extra_env)
 
         logger.debug("Spawning Codex CLI: %s", args[0])

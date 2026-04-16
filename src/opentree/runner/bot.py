@@ -123,6 +123,13 @@ class Bot:
         logger.info("Bot authenticated as %s", bot_user_id)
 
         # Step 3: initialize Dispatcher
+        # bwrap sandbox is optional — log availability for diagnostics only
+        from opentree.runner.sandbox_launcher import is_bwrap_available
+        if not is_bwrap_available():
+            logger.info(
+                "bubblewrap (bwrap) not found — sandbox isolation disabled. "
+                "Install bwrap to enable sandboxed Codex execution."
+            )
         self._dispatcher = Dispatcher(self._home, self._slack_api, self._shutdown_event)
         self._runner_config = load_runner_config(self._home)
 
