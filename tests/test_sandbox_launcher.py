@@ -49,12 +49,14 @@ def test_build_bwrap_args_non_owner_workspace_is_ro() -> None:
 
 
 def test_build_bwrap_args_home_claude_bind_is_rw() -> None:
+    # ~/.claude is bound under the sandbox HOME (/home/codex), not /workspace,
+    # so it never conflicts with a read-only workspace bind.
     args = build_bwrap_args(["claude"], "/work", "/home/test")
     for idx in range(len(args) - 2):
-        if args[idx:idx + 3] == ["--bind-try", "/home/test/.claude", "/workspace/.claude"]:
+        if args[idx:idx + 3] == ["--bind-try", "/home/test/.claude", "/home/codex/.claude"]:
             break
     else:
-        pytest.fail("missing ~/.claude -> /workspace/.claude bind")
+        pytest.fail("missing ~/.claude -> /home/codex/.claude bind")
     assert args[idx] == "--bind-try"
 
 
@@ -79,17 +81,19 @@ def test_build_bwrap_args_etc_resolv_conf_present() -> None:
     ]
 
 
-def test_build_bwrap_args_claude_bound_to_workspace_home() -> None:
+def test_build_bwrap_args_claude_bound_to_sandbox_home() -> None:
+    # .claude is now mounted under /home/codex (sandbox HOME), not /workspace
     args = build_bwrap_args(["claude"], "/work", "/home/test")
-    assert ["--bind-try", "/home/test/.claude", "/workspace/.claude"] in [
+    assert ["--bind-try", "/home/test/.claude", "/home/codex/.claude"] in [
         args[i:i + 3] for i in range(len(args) - 2)
     ]
 
 
-def test_build_bwrap_args_setenv_home_workspace() -> None:
+def test_build_bwrap_args_setenv_home_codex() -> None:
+    # HOME is /home/codex (tmpfs), not /workspace
     args = build_bwrap_args(["claude"], "/work", "/home/test")
     idx = args.index("--setenv")
-    assert args[idx + 1:idx + 4] == ["HOME", "/workspace", "--chdir"]
+    assert args[idx + 1:idx + 4] == ["HOME", "/home/codex", "--chdir"]
 
 
 def test_build_bwrap_args_chdir_workspace() -> None:

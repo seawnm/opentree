@@ -53,10 +53,27 @@ def build_bwrap_args(
     home: str,
     owner: bool = False,
 ) -> list[str]:
-    """Build the complete ``bwrap`` command line."""
+    """Build the complete ``bwrap`` command line.
+
+    Layout inside the sandbox:
+      /workspace  — the user workspace (RW for owner, RO for others)
+      /home/codex — tmpfs, serves as HOME so Codex can write .codex/ etc.
+      /home/codex/.claude — bind from real ~/.claude (RW)
+      /home/codex/.codex  — bind from real ~/.codex  (RW, if it exists)
+      /tmp        — tmpfs
+      /tmp/opentree — bind from host (RW, if it exists)
+
+    Using a separate tmpfs for HOME avoids the "Can't mkdir inside a read-only
+    bind mount" problem that occurs when HOME=/workspace and workspace is
+    mounted read-only for non-owner users.
+    """
     claude_dir = f"{home}/.claude"
     codex_dir = f"{home}/.codex"
     workspace_bind_mode = "--bind" if owner else "--ro-bind"
+
+    # sandbox HOME is always a writable tmpfs dir, independent of workspace rw/ro
+    sandbox_home = "/home/codex"
+
     bind_parts: list[str] = [
         "bwrap",
         "--unshare-all",
@@ -68,6 +85,8 @@ def build_bwrap_args(
         "/dev",
         "--tmpfs",
         "/tmp",
+        "--tmpfs",
+        "/home",
         workspace_bind_mode,
         workspace_path,
         "/workspace",
@@ -77,15 +96,17 @@ def build_bwrap_args(
     if Path(tmp_opentree).exists():
         bind_parts.extend(["--bind", tmp_opentree, tmp_opentree])
 
+    # .claude and .codex are mounted under the tmpfs HOME, not under /workspace,
+    # so bwrap never needs to mkdir inside a read-only bind.
     bind_parts.extend(
         [
             "--bind-try",
             claude_dir,
-            "/workspace/.claude",
+            f"{sandbox_home}/.claude",
         ]
     )
     if Path(codex_dir).exists():
-        bind_parts.extend(["--bind", codex_dir, "/workspace/.codex"])
+        bind_parts.extend(["--bind", codex_dir, f"{sandbox_home}/.codex"])
 
     bind_parts.extend(
         [
@@ -122,7 +143,7 @@ def build_bwrap_args(
             *_resolve_tool_binds(home, original_args[0] if original_args else ""),
             "--setenv",
             "HOME",
-            "/workspace",
+            sandbox_home,
             "--chdir",
             "/workspace",
             "--",
