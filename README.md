@@ -1,8 +1,8 @@
 # OpenTree
 
-Modular Claude Code CLI wrapper for building personal AI agent platforms.
+Modular Codex CLI wrapper for building personal AI agent platforms.
 
-OpenTree wraps Claude Code CLI with Owner-controlled security boundaries, a plug-and-play module system, and a built-in Slack bot runtime. Each user runs their own bot instance -- no multi-tenancy, no shared state. The core stays minimal; all features (personality, memory, scheduling, Slack connectivity) are delivered as modules that can be installed, removed, or replaced independently.
+OpenTree wraps Codex CLI with Owner-controlled security boundaries, a plug-and-play module system, and a built-in Slack bot runtime. Each user runs their own bot instance -- no multi-tenancy, no shared state. The core stays minimal; all features (personality, memory, scheduling, Slack connectivity) are delivered as modules that can be installed, removed, or replaced independently.
 
 ## Features
 
@@ -43,7 +43,7 @@ Owner content outside the markers is preserved during `opentree module refresh`,
 ## Requirements
 
 - Python 3.11+
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
+- [Codex CLI](https://github.com/openai/codex)（v0.120.0+）
 - [uv](https://docs.astral.sh/uv/) (recommended)
 
 ## Installation
@@ -204,7 +204,7 @@ OpenTree Core
 Security layer (Owner-locked, not modifiable)
   Sandbox | Settings Generator | Audit Logger
 
-Claude Code CLI (runtime)
+Codex CLI (runtime)
 ```
 
 ### Core Design Principles
@@ -213,7 +213,7 @@ Claude Code CLI (runtime)
 2. **Minimal core** -- Wrapper + sandbox + onboarding; everything else is a module
 3. **Everything is a module** -- Including Slack connectivity and personality
 4. **Owner-defined boundaries** -- Users cannot weaken security, only extend within scope
-5. **Claude Code CLI as runtime** -- Minimize custom logic; delegate to the CLI wherever possible
+5. **Codex CLI as runtime** -- Minimize custom logic; delegate to the CLI wherever possible
 
 ## Development
 
