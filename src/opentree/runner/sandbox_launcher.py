@@ -108,6 +108,9 @@ def build_bwrap_args(
     if Path(codex_dir).exists():
         bind_parts.extend(["--bind", codex_dir, f"{sandbox_home}/.codex"])
 
+    # System CA bundle path — needed for Codex (Node.js) TLS verification.
+    _CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
+
     bind_parts.extend(
         [
             "--ro-bind",
@@ -134,7 +137,9 @@ def build_bwrap_args(
             "--ro-bind-try",
             "/etc/nsswitch.conf",
             "/etc/nsswitch.conf",
-            "--ro-bind-try",
+            # Use --ro-bind (not --ro-bind-try) so the mount fails loudly if
+            # /etc/ssl is missing rather than silently leaving Codex without TLS.
+            "--ro-bind",
             "/etc/ssl",
             "/etc/ssl",
             "--ro-bind-try",
@@ -144,6 +149,14 @@ def build_bwrap_args(
             "--setenv",
             "HOME",
             sandbox_home,
+            # Codex (Node.js / Rust native-tls) needs to find the system CA
+            # bundle inside the sandbox; point both common env vars at it.
+            "--setenv",
+            "SSL_CERT_FILE",
+            _CA_BUNDLE,
+            "--setenv",
+            "NODE_EXTRA_CA_CERTS",
+            _CA_BUNDLE,
             "--chdir",
             "/workspace",
             "--",

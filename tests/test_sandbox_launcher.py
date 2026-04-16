@@ -91,9 +91,23 @@ def test_build_bwrap_args_claude_bound_to_sandbox_home() -> None:
 
 def test_build_bwrap_args_setenv_home_codex() -> None:
     # HOME is /home/codex (tmpfs), not /workspace
+    # After --setenv HOME /home/codex there are SSL_CERT_FILE setenvs before --chdir
     args = build_bwrap_args(["claude"], "/work", "/home/test")
     idx = args.index("--setenv")
-    assert args[idx + 1:idx + 4] == ["HOME", "/home/codex", "--chdir"]
+    assert args[idx + 1] == "HOME"
+    assert args[idx + 2] == "/home/codex"
+    # --chdir must appear somewhere after the HOME setenv
+    assert "--chdir" in args[idx:]
+
+
+def test_build_bwrap_args_ssl_cert_file_set() -> None:
+    # SSL_CERT_FILE must be set inside the sandbox for Codex TLS
+    args = build_bwrap_args(["codex"], "/work", "/home/test")
+    triples = [args[i:i + 3] for i in range(len(args) - 2)]
+    ssl_entry = ["--setenv", "SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt"]
+    node_entry = ["--setenv", "NODE_EXTRA_CA_CERTS", "/etc/ssl/certs/ca-certificates.crt"]
+    assert ssl_entry in triples, "SSL_CERT_FILE not set in bwrap args"
+    assert node_entry in triples, "NODE_EXTRA_CA_CERTS not set in bwrap args"
 
 
 def test_build_bwrap_args_chdir_workspace() -> None:

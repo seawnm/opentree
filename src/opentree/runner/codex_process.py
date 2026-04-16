@@ -77,9 +77,29 @@ def _build_codex_args(
     cwd: str,
     session_id: str = "",
     message: str = "",
+    sandboxed: bool = False,
 ) -> list[str]:
-    """Build the Codex CLI command-line arguments."""
+    """Build the Codex CLI command-line arguments.
+
+    When running inside a bwrap sandbox (sandboxed=True) Codex must NOT
+    try to create its own nested bwrap sandbox.  We therefore use
+    ``--dangerously-bypass-approvals-and-sandbox`` instead of ``--full-auto``,
+    and add ``--skip-git-repo-check`` so that the /workspace trust entry in
+    config.toml is not required (the outer bwrap already enforces isolation).
+
+    When running without an outer sandbox (sandboxed=False) we keep
+    ``--full-auto`` so Codex uses its workspace-write sandbox for basic
+    isolation.
+    """
     del system_prompt  # Written to AGENTS.md before the subprocess starts.
+
+    if sandboxed:
+        # Outer bwrap handles isolation; tell Codex to skip its own sandbox.
+        exec_flag = "--dangerously-bypass-approvals-and-sandbox"
+        extra_flags = ["--skip-git-repo-check"]
+    else:
+        exec_flag = "--full-auto"
+        extra_flags = []
 
     if session_id:
         return [
@@ -87,7 +107,8 @@ def _build_codex_args(
             "exec",
             "resume",
             "--json",
-            "--full-auto",
+            exec_flag,
+            *extra_flags,
             "--session-id",
             session_id,
             "-C",
@@ -99,7 +120,8 @@ def _build_codex_args(
         config.codex_command,
         "exec",
         "--json",
-        "--full-auto",
+        exec_flag,
+        *extra_flags,
         "-C",
         cwd,
         message,
@@ -215,6 +237,7 @@ class CodexProcess:
             cli_cwd,
             session_id=self._session_id,
             message=self._message,
+            sandboxed=self._sandboxed,
         )
         if self._sandboxed:
             args = build_bwrap_args(
