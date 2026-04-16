@@ -39,12 +39,15 @@
 
 ### Security
 
-- **Sandboxed Bash execution (bwrap)** — All Claude CLI subprocesses now execute inside
+- **Sandboxed Bash execution (bwrap)** — All Codex CLI subprocesses now execute inside
   a bubblewrap (bwrap) kernel namespace sandbox. Mount isolation restricts filesystem
-  access to /workspace and ~/.claude only. /mnt/e/ (Windows FS), ~/.ssh, and other
+  access to /workspace and ~/.codex only. /mnt/e/ (Windows FS), ~/.ssh, and other
   sensitive paths are excluded. Zero-trust design: sandbox applies to all users including
-  owner. Bot refuses to start if bwrap is unavailable. Network remains open for Claude API.
+  owner. Bot refuses to start if bwrap is unavailable. Network remains open for Codex API.
   Design: [openspec/changes/20260416-sandboxed-bash/](openspec/changes/20260416-sandboxed-bash/)
+  - **bwrap HOME 分離修正** — sandbox HOME 改為獨立 tmpfs `/home/codex`（原為 `/workspace`），避免非 owner 的 ro-bind workspace 導致 `bwrap: Can't mkdir /workspace/.codex` 失敗
+  - **nested bwrap 禁止** — sandboxed 模式改用 `--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check`（原 `--full-auto`），避免 Codex 在 outer bwrap 內再嵌套自己的 sandbox
+  - **SSL CA bundle 注入** — sandbox 內設定 `SSL_CERT_FILE` + `NODE_EXTRA_CA_CERTS` 指向 `/etc/ssl/certs/ca-certificates.crt`，解決 Codex Node.js TLS 無法驗證憑證的問題
 - **移除 `--dangerously-skip-permissions`（bypassPermissions）** — Owner 用戶不再跳過權限評估。所有使用者（含 Owner）一律採 `--permission-mode dontAsk`，`settings.json` 的 allow/deny 規則對所有人生效。`ClaudeProcess` 的 `permission_mode` 參數已移除。設計決策：[openspec/changes/20260411-owner-dontask-mode/](openspec/changes/20260411-owner-dontask-mode/)
   - **`modules/core/opentree.json` 路徑限縮**：裸 `Read`/`Write`/`Edit` 改為 `$OPENTREE_HOME/**` 和 `//tmp/**` 範圍限制，防止讀寫工作區外的系統路徑
   - **`modules/guardrail/opentree.json` 絕對路徑 deny 強化**：新增 `Read($OPENTREE_HOME/config/.env*)` 等 3 條絕對路徑規則，補強相對路徑 deny 的盲點
