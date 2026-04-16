@@ -600,7 +600,7 @@ class TestDispatcherMemoryIntegration:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
             patch(
@@ -642,7 +642,7 @@ class TestDispatcherMemoryIntegration:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
             patch(
@@ -680,7 +680,7 @@ class TestDispatcherMemoryIntegration:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
             patch(

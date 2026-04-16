@@ -21,7 +21,10 @@ class RunnerConfig:
 
     Attributes:
         progress_interval: Seconds between Slack progress updates.
-        claude_command: Name or path of the Claude CLI binary.
+        codex_command: Name or path of the Codex CLI binary.
+        codex_sandbox: Sandbox mode for Codex CLI execution. Valid values are
+            ``"workspace-write"`` and ``"danger-full-access"``.
+        claude_command: Deprecated alias for ``codex_command``.
         task_timeout: Maximum execution time per task, in seconds.
         heartbeat_timeout: Stream idle timeout, in seconds.
         max_concurrent_tasks: Maximum number of parallel tasks.
@@ -40,7 +43,8 @@ class RunnerConfig:
     """
 
     progress_interval: int = 10
-    claude_command: str = "claude"
+    codex_command: str = "codex"
+    codex_sandbox: str = "workspace-write"
     task_timeout: int = 1800
     heartbeat_timeout: int = 900
     max_concurrent_tasks: int = 2
@@ -48,6 +52,11 @@ class RunnerConfig:
     drain_timeout: int = 30
     admin_users: tuple[str, ...] = ()
     memory_extraction_enabled: bool = True
+
+    @property
+    def claude_command(self) -> str:
+        """Deprecated alias for ``codex_command``."""
+        return self.codex_command
 
 
 def _validate(data: dict) -> None:
@@ -83,6 +92,16 @@ def _validate(data: dict) -> None:
         raise ValueError(
             f"RunnerConfig: 'max_concurrent_tasks' must be >= 1, "
             f"got {data['max_concurrent_tasks']}"
+        )
+
+    if "codex_sandbox" in data and data["codex_sandbox"] not in (
+        "workspace-write",
+        "danger-full-access",
+    ):
+        raise ValueError(
+            "RunnerConfig: 'codex_sandbox' must be one of "
+            "'workspace-write', 'danger-full-access', "
+            f"got {data['codex_sandbox']!r}"
         )
 
 
@@ -121,7 +140,11 @@ def load_runner_config(opentree_home: Path) -> RunnerConfig:
 
     return RunnerConfig(
         progress_interval=data.get("progress_interval", 10),
-        claude_command=data.get("claude_command", "claude"),
+        codex_command=data.get(
+            "codex_command",
+            data.get("claude_command", "codex"),
+        ),
+        codex_sandbox=data.get("codex_sandbox", "workspace-write"),
         task_timeout=data.get("task_timeout", 1800),
         heartbeat_timeout=data.get("heartbeat_timeout", 900),
         max_concurrent_tasks=data.get("max_concurrent_tasks", 2),

@@ -30,7 +30,7 @@ def _make_config(**kwargs) -> RunnerConfig:
     defaults = dict(
         task_timeout=30,
         heartbeat_timeout=10,
-        claude_command="claude",
+        codex_command="claude",  # claude_command is now a deprecated alias for codex_command
         progress_interval=5,
     )
     defaults.update(kwargs)
@@ -212,7 +212,7 @@ class TestBuildClaudeArgs:
     def test_basic_args(self):
         from opentree.runner.claude_process import _build_claude_args
 
-        config = _make_config(claude_command="claude")
+        config = _make_config(codex_command="claude")
         args = _build_claude_args(config, system_prompt="sys", cwd="/work")
 
         assert args[0] == "claude"
@@ -269,7 +269,7 @@ class TestBuildClaudeArgs:
     def test_custom_claude_command(self):
         from opentree.runner.claude_process import _build_claude_args
 
-        config = _make_config(claude_command="/usr/local/bin/claude")
+        config = _make_config(codex_command="/usr/local/bin/claude")
         args = _build_claude_args(config, system_prompt="s", cwd="/c")
         assert args[0] == "/usr/local/bin/claude"
 

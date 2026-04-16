@@ -28,7 +28,8 @@ class TestDefaultConfig:
         result = load_runner_config(tmp_path)
 
         assert result.progress_interval == 10
-        assert result.claude_command == "claude"
+        assert result.codex_command == "codex"
+        assert result.claude_command == "codex"  # deprecated alias
         assert result.task_timeout == 1800
         assert result.heartbeat_timeout == 900
         assert result.max_concurrent_tasks == 2
@@ -54,7 +55,7 @@ class TestLoadFromFile:
             json.dumps(
                 {
                     "progress_interval": 5,
-                    "claude_command": "claude-dev",
+                    "codex_command": "codex-dev",
                     "task_timeout": 3600,
                     "heartbeat_timeout": 600,
                     "max_concurrent_tasks": 4,
@@ -68,7 +69,8 @@ class TestLoadFromFile:
         result = load_runner_config(tmp_path)
 
         assert result.progress_interval == 5
-        assert result.claude_command == "claude-dev"
+        assert result.codex_command == "codex-dev"
+        assert result.claude_command == "codex-dev"  # deprecated alias
         assert result.task_timeout == 3600
         assert result.heartbeat_timeout == 600
         assert result.max_concurrent_tasks == 4
@@ -92,13 +94,29 @@ class TestPartialConfig:
         assert result.task_timeout == 600
         # All other fields stay at defaults
         assert result.progress_interval == 10
-        assert result.claude_command == "claude"
+        assert result.codex_command == "codex"
         assert result.heartbeat_timeout == 900
         assert result.max_concurrent_tasks == 2
         assert result.session_expiry_days == 180
         assert result.drain_timeout == 30
 
-    def test_only_claude_command_overridden(self, tmp_path: Path) -> None:
+    def test_only_codex_command_overridden(self, tmp_path: Path) -> None:
+        """codex_command can be overridden via runner.json."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "runner.json").write_text(
+            json.dumps({"codex_command": "/usr/local/bin/codex"}),
+            encoding="utf-8",
+        )
+
+        result = load_runner_config(tmp_path)
+
+        assert result.codex_command == "/usr/local/bin/codex"
+        assert result.claude_command == "/usr/local/bin/codex"  # deprecated alias
+        assert result.task_timeout == 1800
+
+    def test_legacy_claude_command_key_still_works(self, tmp_path: Path) -> None:
+        """Legacy 'claude_command' JSON key is accepted as fallback for codex_command."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         (config_dir / "runner.json").write_text(
@@ -108,6 +126,7 @@ class TestPartialConfig:
 
         result = load_runner_config(tmp_path)
 
+        assert result.codex_command == "/usr/local/bin/claude"
         assert result.claude_command == "/usr/local/bin/claude"
         assert result.task_timeout == 1800
 
@@ -249,7 +268,7 @@ class TestInvalidJson:
 
         assert result.task_timeout == 1800
         assert result.max_concurrent_tasks == 2
-        assert result.claude_command == "claude"
+        assert result.codex_command == "codex"
 
     def test_malformed_json_all_fields_default(self, tmp_path: Path) -> None:
         config_dir = tmp_path / "config"
@@ -288,7 +307,7 @@ class TestEmptyFile:
         result = load_runner_config(tmp_path)
 
         assert result.progress_interval == 10
-        assert result.claude_command == "claude"
+        assert result.codex_command == "codex"
 
 
 class TestRunnerConfigDirectInstantiation:
@@ -300,7 +319,8 @@ class TestRunnerConfigDirectInstantiation:
         assert config.task_timeout == 500
         assert config.max_concurrent_tasks == 8
         # Unchanged defaults
-        assert config.claude_command == "claude"
+        assert config.codex_command == "codex"
+        assert config.claude_command == "codex"  # deprecated alias
 
     def test_dataclass_fields_present(self) -> None:
         import dataclasses
@@ -308,7 +328,7 @@ class TestRunnerConfigDirectInstantiation:
         fields = {f.name for f in dataclasses.fields(RunnerConfig)}
 
         assert "progress_interval" in fields
-        assert "claude_command" in fields
+        assert "codex_command" in fields
         assert "task_timeout" in fields
         assert "heartbeat_timeout" in fields
         assert "max_concurrent_tasks" in fields

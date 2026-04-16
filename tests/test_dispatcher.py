@@ -5,7 +5,7 @@ Tests cover:
   - build_prompt_context: builds correct PromptContext from Task fields
   - dispatch: submits task, starts immediately vs queued
   - _process_task: success path, error path, timeout path
-  - Session resume: session_id passed to ClaudeProcess and saved after success
+  - Session resume: session_id passed to CodexProcess and saved after success
   - Admin commands: status, help, shutdown
   - get_stats: returns queue statistics
   - next task after completion promoted
@@ -294,7 +294,7 @@ class TestProcessTaskSuccess:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys-prompt"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
         ):
             MockClaude.return_value.run.return_value = fake_result
             dispatcher._process_task(task)
@@ -317,7 +317,7 @@ class TestProcessTaskSuccess:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys-prompt"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
         ):
             MockClaude.return_value.run.return_value = fake_result
             dispatcher._process_task(task)
@@ -341,7 +341,7 @@ class TestProcessTaskSuccess:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch.object(dispatcher._task_queue, "mark_completed") as mock_complete,
         ):
             MockClaude.return_value.run.return_value = fake_result
@@ -362,7 +362,7 @@ class TestProcessTaskSuccess:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch.object(dispatcher._session_mgr, "set_session_id") as mock_set,
         ):
             MockClaude.return_value.run.return_value = fake_result
@@ -383,7 +383,7 @@ class TestProcessTaskSuccess:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch.object(dispatcher._session_mgr, "set_session_id") as mock_set,
         ):
             MockClaude.return_value.run.return_value = fake_result
@@ -398,7 +398,7 @@ class TestProcessTaskSuccess:
 
 class TestSessionResume:
     def test_existing_session_id_passed_to_claude(self, tmp_path):
-        """If a session_id exists for the thread, it must be passed to ClaudeProcess."""
+        """If a session_id exists for the thread, it must be passed to CodexProcess."""
         dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
         task = make_task(thread_ts="existing-thread")
         task.status = TaskStatus.RUNNING
@@ -413,12 +413,12 @@ class TestSessionResume:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
         ):
             MockClaude.return_value.run.return_value = fake_result
             dispatcher._process_task(task)
 
-        # ClaudeProcess constructor should have received session_id
+        # CodexProcess constructor should have received session_id
         init_kwargs = MockClaude.call_args
         # Check positional or keyword args
         session_id_passed = (
@@ -426,7 +426,7 @@ class TestSessionResume:
             if init_kwargs[1]
             else "prev-session-123" in init_kwargs[0]
         )
-        assert session_id_passed, f"session_id not passed to ClaudeProcess. Got: {init_kwargs}"
+        assert session_id_passed, f"session_id not passed to CodexProcess. Got: {init_kwargs}"
 
     def test_no_session_id_for_new_thread(self, tmp_path):
         """For a new thread with no session, session_id should be empty string."""
@@ -442,7 +442,7 @@ class TestSessionResume:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
         ):
             MockClaude.return_value.run.return_value = fake_result
             dispatcher._process_task(task)
@@ -471,7 +471,7 @@ class TestProcessTaskError:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch.object(dispatcher._task_queue, "mark_failed") as mock_fail,
             patch.object(dispatcher._task_queue, "mark_completed") as mock_complete,
         ):
@@ -495,7 +495,7 @@ class TestProcessTaskError:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
         ):
             MockClaude.return_value.run.return_value = fake_result
             dispatcher._process_task(task)
@@ -517,7 +517,7 @@ class TestProcessTaskError:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch.object(dispatcher._task_queue, "mark_failed") as mock_fail,
         ):
             MockClaude.return_value.run.return_value = fake_result
@@ -526,14 +526,14 @@ class TestProcessTaskError:
         mock_fail.assert_called_once_with(task)
 
     def test_marks_failed_when_exception_raised(self, tmp_path):
-        """If ClaudeProcess.run raises an exception, task should be marked failed."""
+        """If CodexProcess.run raises an exception, task should be marked failed."""
         dispatcher, slack_api, _ = _make_dispatcher(tmp_path)
         task = make_task()
         task.status = TaskStatus.RUNNING
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch.object(dispatcher._task_queue, "mark_failed") as mock_fail,
         ):
             MockClaude.return_value.run.side_effect = RuntimeError("unexpected")
@@ -814,7 +814,7 @@ class TestDispatchIntegration:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys-prompt"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
         ):
             MockClaude.return_value.run.return_value = fake_result
             dispatcher._process_task = tracked_process
@@ -855,7 +855,7 @@ class TestPhase2Integration:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
         ):
@@ -881,7 +881,7 @@ class TestPhase2Integration:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.download_files", return_value=[]) as mock_dl,
             patch("opentree.runner.dispatcher.build_file_context", return_value="") as mock_fc,
@@ -915,7 +915,7 @@ class TestPhase2Integration:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess", side_effect=capture_claude),
+            patch("opentree.runner.dispatcher.CodexProcess", side_effect=capture_claude),
             patch("opentree.runner.dispatcher.build_thread_context", return_value=thread_ctx),
             patch("opentree.runner.dispatcher.cleanup_temp"),
         ):
@@ -937,7 +937,7 @@ class TestPhase2Integration:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp") as mock_cleanup,
         ):
@@ -1147,7 +1147,7 @@ class TestRetryOverloaded:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
             patch("opentree.runner.dispatcher.time.sleep") as mock_sleep,
@@ -1180,7 +1180,7 @@ class TestRetryOverloaded:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
             patch("opentree.runner.dispatcher.time.sleep"),
@@ -1212,7 +1212,7 @@ class TestRetryOverloaded:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
             patch("opentree.runner.dispatcher.time.sleep") as mock_sleep,
@@ -1282,7 +1282,7 @@ class TestRetrySessionError:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess", side_effect=capture_claude),
+            patch("opentree.runner.dispatcher.CodexProcess", side_effect=capture_claude),
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
             patch("opentree.runner.dispatcher.time.sleep") as mock_sleep,
@@ -1313,7 +1313,7 @@ class TestRetrySessionError:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
             patch("opentree.runner.dispatcher.time.sleep"),
@@ -1353,7 +1353,7 @@ class TestRetryTimeout:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
             patch("opentree.runner.dispatcher.time.sleep") as mock_sleep,
@@ -1456,7 +1456,7 @@ class TestCircuitBreakerIntegration:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
         ):
@@ -1482,7 +1482,7 @@ class TestCircuitBreakerIntegration:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
             patch.object(dispatcher._task_queue, "mark_failed"),
@@ -1511,7 +1511,7 @@ class TestCircuitBreakerIntegration:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
             patch("opentree.runner.dispatcher.time.sleep"),
@@ -1558,7 +1558,7 @@ class TestCircuitBreakerIntegration:
             task.status = TaskStatus.RUNNING
             with (
                 patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-                patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+                patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
                 patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
                 patch("opentree.runner.dispatcher.cleanup_temp"),
                 patch.object(dispatcher._task_queue, "mark_failed"),
@@ -2081,7 +2081,7 @@ class TestDispatcherMemoryExtractionEnabled:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.memory_extractor.extract_memories") as mock_extract,
         ):
             MockClaude.return_value.run.return_value = fake_result
@@ -2109,7 +2109,7 @@ class TestDispatcherMemoryExtractionEnabled:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.memory_extractor.extract_memories", return_value=[]) as mock_extract,
         ):
             MockClaude.return_value.run.return_value = fake_result
@@ -2136,7 +2136,7 @@ class TestDispatcherMemoryExtractionEnabled:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess") as MockClaude,
+            patch("opentree.runner.dispatcher.CodexProcess") as MockClaude,
             patch("opentree.runner.memory_extractor.extract_memories") as mock_extract,
         ):
             MockClaude.return_value.run.return_value = fake_result
@@ -2153,7 +2153,7 @@ class TestPermissionModeUniformity:
     """Admin users must NOT receive special Claude CLI permission treatment.
 
     After the 2026-04-11 security fix, --dangerously-skip-permissions was
-    removed entirely.  ClaudeProcess no longer accepts a permission_mode
+    removed entirely.  CodexProcess no longer accepts a permission_mode
     parameter, and the dispatcher must not pass one for ANY user.
     """
 
@@ -2170,7 +2170,7 @@ class TestPermissionModeUniformity:
         return r
 
     def test_admin_user_no_permission_mode_kwarg(self, tmp_path):
-        """Dispatcher must not pass permission_mode to ClaudeProcess for Owner users.
+        """Dispatcher must not pass permission_mode to CodexProcess for Owner users.
 
         Regression test: before 2026-04-11 fix, admin users triggered
         permission_mode='owner' -> --dangerously-skip-permissions.
@@ -2191,7 +2191,7 @@ class TestPermissionModeUniformity:
 
         with (
             patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-            patch("opentree.runner.dispatcher.ClaudeProcess", side_effect=capture_claude),
+            patch("opentree.runner.dispatcher.CodexProcess", side_effect=capture_claude),
             patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
             patch("opentree.runner.dispatcher.cleanup_temp"),
         ):
@@ -2199,12 +2199,12 @@ class TestPermissionModeUniformity:
 
         assert len(captured_kwargs) == 1
         assert "permission_mode" not in captured_kwargs[0], (
-            "ClaudeProcess must not receive permission_mode kwarg; "
+            "CodexProcess must not receive permission_mode kwarg; "
             "--dangerously-skip-permissions was removed in the 2026-04-11 security fix"
         )
 
     def test_admin_and_regular_user_receive_identical_claude_kwargs(self, tmp_path):
-        """ClaudeProcess is instantiated identically for Owner and regular users.
+        """CodexProcess is instantiated identically for Owner and regular users.
 
         Verifies that is_owner=True does not introduce any extra kwargs that
         could elevate CLI permissions for the admin user.
@@ -2232,7 +2232,7 @@ class TestPermissionModeUniformity:
 
             with (
                 patch("opentree.runner.dispatcher.assemble_system_prompt", return_value="sys"),
-                patch("opentree.runner.dispatcher.ClaudeProcess", side_effect=capture_claude),
+                patch("opentree.runner.dispatcher.CodexProcess", side_effect=capture_claude),
                 patch("opentree.runner.dispatcher.build_thread_context", return_value=""),
                 patch("opentree.runner.dispatcher.cleanup_temp"),
             ):
@@ -2255,6 +2255,6 @@ class TestPermissionModeUniformity:
         admin_keys = set(admin_kwargs[0].keys()) - user_specific
         regular_keys = set(regular_kwargs[0].keys()) - user_specific
         assert admin_keys == regular_keys, (
-            f"Admin user ClaudeProcess kwargs {admin_keys} differ from "
+            f"Admin user CodexProcess kwargs {admin_keys} differ from "
             f"regular user kwargs {regular_keys} — permission elevation detected"
         )

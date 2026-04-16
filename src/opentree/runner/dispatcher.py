@@ -13,7 +13,9 @@ from opentree.core.prompt import PromptContext, assemble_system_prompt
 from opentree.registry.models import RegistryData
 from opentree.registry.registry import Registry
 from opentree.runner.circuit_breaker import CircuitBreaker
-from opentree.runner.claude_process import ClaudeProcess, ClaudeResult
+from opentree.runner.claude_process import ClaudeResult
+from opentree.runner.codex_process import CodexProcess
+from opentree.runner.codex_stream_parser import Phase
 from opentree.runner.config import RunnerConfig, load_runner_config
 from opentree.runner.reset import reset_bot, reset_bot_all
 from opentree.runner.retry import RetryConfig, classify_error, should_retry
@@ -21,7 +23,6 @@ from opentree.runner.file_handler import build_file_context, cleanup_temp, downl
 from opentree.runner.progress import ProgressReporter
 from opentree.runner.session import SessionManager
 from opentree.runner.slack_api import SlackAPI
-from opentree.runner.stream_parser import Phase
 from opentree.runner.task_queue import Task, TaskQueue
 from opentree.runner.thread_context import build_thread_context
 from opentree.runner.tool_tracker import ToolTracker
@@ -257,7 +258,7 @@ class Dispatcher:
         6. Assemble system prompt.
         7. Look up existing session_id for thread continuity.
         8. Build message text (prepend thread context and file context).
-        9. Run :class:`~opentree.runner.claude_process.ClaudeProcess` with
+        9. Run :class:`~opentree.runner.codex_process.CodexProcess` with
            progress callback.
         10. Send final result via ProgressReporter.complete().
         11. Persist session_id on success.
@@ -341,7 +342,7 @@ class Dispatcher:
             result: ClaudeResult | None = None
 
             for attempt in range(retry_config.max_attempts + 1):
-                claude = ClaudeProcess(
+                claude = CodexProcess(
                     config=self._runner_config,
                     system_prompt=system_prompt,
                     cwd=self._workspace_dir,
