@@ -14,6 +14,7 @@ from opentree.runner.dispatcher import Dispatcher
 from opentree.runner.health import check_disk_usage
 from opentree.runner.logging_config import setup_logging
 from opentree.runner.receiver import Receiver
+from opentree.runner.sandbox_launcher import check_bwrap_or_raise
 from opentree.runner.slack_api import SlackAPI
 
 logger = logging.getLogger(__name__)
@@ -123,13 +124,7 @@ class Bot:
         logger.info("Bot authenticated as %s", bot_user_id)
 
         # Step 3: initialize Dispatcher
-        # bwrap sandbox is optional — log availability for diagnostics only
-        from opentree.runner.sandbox_launcher import is_bwrap_available
-        if not is_bwrap_available():
-            logger.info(
-                "bubblewrap (bwrap) not found — sandbox isolation disabled. "
-                "Install bwrap to enable sandboxed Codex execution."
-            )
+        check_bwrap_or_raise()
         self._dispatcher = Dispatcher(self._home, self._slack_api, self._shutdown_event)
         self._runner_config = load_runner_config(self._home)
 
