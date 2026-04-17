@@ -102,6 +102,10 @@ def _build_codex_args(
         extra_flags = []
 
     if session_id:
+        # codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]
+        # --session-id flag was removed; SESSION_ID and PROMPT are positional.
+        # -C/--cd is not available in the resume subcommand; cwd is handled by
+        # bwrap --chdir /workspace (sandboxed) or the Popen cwd= argument.
         return [
             config.codex_command,
             "exec",
@@ -109,11 +113,8 @@ def _build_codex_args(
             "--json",
             exec_flag,
             *extra_flags,
-            "--session-id",
-            session_id,
-            "-C",
-            cwd,
-            message,
+            session_id,  # positional SESSION_ID
+            message,     # positional PROMPT
         ]
 
     return [
@@ -230,6 +231,9 @@ class CodexProcess:
                 elapsed_seconds=time.monotonic() - start_time,
             )
 
+        if self._sandboxed:
+            Path(self._cwd, ".codex").mkdir(exist_ok=True)
+
         cli_cwd = "/workspace" if self._sandboxed else self._cwd
         args = _build_codex_args(
             self._config,
@@ -253,6 +257,7 @@ class CodexProcess:
         try:
             self._process = subprocess.Popen(
                 args,
+                stdin=subprocess.DEVNULL,  # prevent Codex from reading stdin / entering interactive mode
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=env,

@@ -212,3 +212,86 @@ def test_resolve_tool_binds_never_binds_whole_home(tmp_path: Path) -> None:
         str(local_root),
     ]
     assert str(home) not in binds
+
+
+def test_build_bwrap_args_codex_dir_bound_to_sandbox_home(tmp_path: Path) -> None:
+    """workspace/.codex is bound to HOME/.codex so Codex state persists across turns."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    codex_dir = workspace / ".codex"
+    codex_dir.mkdir()
+
+    args = build_bwrap_args(["codex", "exec"], str(workspace), "/home/test", owner=True)
+    triples = [args[i:i + 3] for i in range(len(args) - 2)]
+    assert ["--bind", str(codex_dir), "/home/codex/.codex"] in triples
+
+
+def test_build_bwrap_args_codex_dir_skipped_when_missing(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    # .codex dir does NOT exist
+
+    args = build_bwrap_args(["codex", "exec"], str(workspace), "/home/test", owner=True)
+    assert "/home/codex/.codex" not in args
+
+
+def test_build_bwrap_args_codex_dir_rw_even_when_workspace_ro(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    codex_dir = workspace / ".codex"
+    codex_dir.mkdir()
+
+    args = build_bwrap_args(["codex", "exec"], str(workspace), "/home/test", owner=False)
+    triples = [args[i:i + 3] for i in range(len(args) - 2)]
+    # workspace is RO
+    assert ["--ro-bind", str(workspace), "/workspace"] in triples
+    # but .codex bind to HOME is always RW (for state persistence)
+    assert ["--bind", str(codex_dir), "/home/codex/.codex"] in triples
+
+
+def test_build_bwrap_args_auth_json_bound_ro(tmp_path: Path) -> None:
+    """auth.json is mounted RO at HOME/.codex/auth.json inside the sandbox."""
+    home = tmp_path / "home"
+    codex_home = home / ".codex"
+    codex_home.mkdir(parents=True)
+    auth_json = codex_home / "auth.json"
+    auth_json.write_text("{}", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".codex").mkdir()
+
+    args = build_bwrap_args(["codex", "exec"], str(workspace), str(home))
+    triples = [args[i:i + 3] for i in range(len(args) - 2)]
+    # auth.json must be mounted at sandbox HOME/.codex/auth.json (not in /workspace)
+    assert ["--ro-bind-try", str(auth_json), "/home/codex/.codex/auth.json"] in triples
+    # Must NOT be at /workspace/.codex/auth.json (Codex never reads it there)
+    assert "/workspace/.codex/auth.json" not in args
+
+
+def test_build_bwrap_args_auth_json_skipped_when_missing(tmp_path: Path) -> None:
+    """When host auth.json is absent, no --ro-bind-try for auth is added."""
+    home = tmp_path / "home"
+    home.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".codex").mkdir()
+
+    args = build_bwrap_args(["codex", "exec"], str(workspace), str(home))
+    # Neither the workspace nor the sandbox-HOME path should reference auth.json
+    assert "/workspace/.codex/auth.json" not in args
+    assert "/home/codex/.codex/auth.json" not in args
+
+
+def test_build_bwrap_args_codex_bind_after_workspace_bind(tmp_path: Path) -> None:
+    """workspace/.codex bind (→ HOME/.codex) must appear after the workspace bind."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    codex_dir = workspace / ".codex"
+    codex_dir.mkdir()
+
+    args = build_bwrap_args(["codex", "exec"], str(workspace), "/home/test", owner=True)
+    # workspace bind target index
+    ws_idx = args.index("/workspace")
+    # HOME/.codex bind target index
+    codex_target_idx = args.index("/home/codex/.codex")
+    assert codex_target_idx > ws_idx, ".codex bind must appear after workspace bind"

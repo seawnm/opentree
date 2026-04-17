@@ -56,19 +56,29 @@ def build_bwrap_args(
     """Build the complete ``bwrap`` command line.
 
     Layout inside the sandbox:
-      /workspace  — the user workspace (RW for owner, RO for others)
-      /home/codex — tmpfs, serves as HOME so Codex can write .codex/ etc.
-      /home/codex/.claude — bind from real ~/.claude (RW)
-      /home/codex/.codex  — bind from real ~/.codex  (RW, if it exists)
-      /tmp        — tmpfs
-      /tmp/opentree — bind from host (RW, if it exists)
+      /workspace                   — user workspace (RW for owner, RO for others)
+      /home/codex                  — tmpfs, serves as HOME
+      /home/codex/.codex           — RW bind from workspace/.codex (persistent state)
+      /home/codex/.codex/auth.json — RO bind from ~/.codex/auth.json (overlaid on top)
+      /home/codex/.claude          — bind from real ~/.claude (RW)
+      /tmp                         — tmpfs
+      /tmp/opentree                — bind from host (RW, if it exists)
 
-    Using a separate tmpfs for HOME avoids the "Can't mkdir inside a read-only
-    bind mount" problem that occurs when HOME=/workspace and workspace is
-    mounted read-only for non-owner users.
+    Codex uses HOME/.codex for BOTH authentication (auth.json) and persistent state
+    (state_5.sqlite, sessions/, rollout files for resume).  workspace/.codex is bound
+    directly to HOME/.codex so that state survives across bwrap invocations and
+    ``codex exec resume`` can find the rollout from a previous turn.
+
+    auth.json is overlaid RO on top of the RW workspace/.codex bind so the host
+    credential is shared across instances without being writable inside the sandbox.
+    Since --ro-bind-try mounts a new filesystem layer over the existing bind, the RW
+    workspace/.codex directory need not contain auth.json itself.
+
+    The workspace/.codex directory must be pre-created on the host by the caller
+    (CodexProcess.run) before bwrap is launched; bwrap cannot mkdir inside a
+    read-only bind mount.
     """
     claude_dir = f"{home}/.claude"
-    codex_dir = f"{home}/.codex"
     workspace_bind_mode = "--bind" if owner else "--ro-bind"
 
     # sandbox HOME is always a writable tmpfs dir, independent of workspace rw/ro
@@ -79,6 +89,7 @@ def build_bwrap_args(
         "--unshare-all",
         "--share-net",
         "--die-with-parent",
+        "--new-session",  # setsid: detach from controlling TTY so Codex never reads stdin
         "--proc",
         "/proc",
         "--dev",
@@ -92,11 +103,31 @@ def build_bwrap_args(
         "/workspace",
     ]
 
+    # Bind workspace/.codex → HOME/.codex (always RW).
+    # Codex uses HOME/.codex for both session state (state_5.sqlite, sessions/,
+    # rollout files) and auth.  Binding workspace/.codex here ensures state
+    # persists across bwrap invocations so `codex exec resume` can find rollouts.
+    # Pre-creation of workspace/.codex on the host is the caller's responsibility
+    # (CodexProcess.run), since bwrap cannot mkdir inside a read-only bind mount.
+    workspace_codex_dir = Path(workspace_path) / ".codex"
+    if workspace_codex_dir.exists():
+        bind_parts.extend(["--bind", str(workspace_codex_dir), f"{sandbox_home}/.codex"])
+
+    # Overlay auth.json RO on top of the workspace/.codex bind.
+    # auth_mode=chatgpt: Codex reads tokens from HOME/.codex/auth.json.
+    # --ro-bind-try mounts a fresh filesystem layer over the existing directory
+    # bind, so auth.json from the host is visible inside without being writable.
+    host_auth_json = Path(home) / ".codex" / "auth.json"
+    if host_auth_json.exists():
+        bind_parts.extend(
+            ["--ro-bind-try", str(host_auth_json), f"{sandbox_home}/.codex/auth.json"]
+        )
+
     tmp_opentree = "/tmp/opentree"
     if Path(tmp_opentree).exists():
         bind_parts.extend(["--bind", tmp_opentree, tmp_opentree])
 
-    # .claude and .codex are mounted under the tmpfs HOME, not under /workspace,
+    # .claude is mounted under the tmpfs HOME, not under /workspace,
     # so bwrap never needs to mkdir inside a read-only bind.
     bind_parts.extend(
         [
@@ -105,8 +136,6 @@ def build_bwrap_args(
             f"{sandbox_home}/.claude",
         ]
     )
-    if Path(codex_dir).exists():
-        bind_parts.extend(["--bind", codex_dir, f"{sandbox_home}/.codex"])
 
     # System CA bundle path — needed for Codex (Node.js) TLS verification.
     _CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"

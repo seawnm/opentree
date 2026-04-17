@@ -2,10 +2,51 @@
 
 > 蒐集來源：近 7 天 Slack 對話（2026-04-08 ~ 2026-04-15）+ 推導案例
 > 產生日期：2026-04-15
+> **修訂日期：2026-04-15（能力全面審查）**
 > 對應模組變更：personality（prompt_hook）、memory（sop 修復）、guardrail（降級優化）
 >
 > **Bot 名稱**：Bot_Walter（Slack mention: @Bot_Walter，User ID: U0APZ9MR997）
 > ⚠️ 請 Walter 確認後回傳，再進行 E2E 測試實作
+
+---
+
+## 能力審查摘要（2026-04-15）
+
+針對用戶提出的「bot 可以生成 PDF 嗎」質疑，逐一調查 Bot_Walter 的實際工具權限，確認每個 Case 的預期行為與能力判斷是否一致。
+
+### PDF 能力調查結論
+
+**結論：Bot_Walter 目前無法生成 PDF。**
+
+| 調查項目 | 結果 |
+|----------|------|
+| `document-skills:pdf` skill 是否可用 | 是（user scope 全域安裝，`~/.claude/plugins/installed_plugins.json`） |
+| skill 生成 PDF 的方式 | Python `reportlab` / `pypdf` 腳本 或 CLI 工具（`qpdf`、`pdftotext`） |
+| `reportlab` 是否已安裝 | 是（v4.4.10，system Python） |
+| Bot_Walter settings.json 是否允許 `Bash(python*)` | **否** — allow 清單僅含特定 `uv run --directory *:*xxx_tool*` 和 `alloy *` pattern |
+| Bot_Walter 是否有其他 PDF 生成路徑 | 否 — 無 `Bash(npx*)`, `Bash(node*)`, `Bash(wkhtmltopdf*)` 等 pattern |
+| `Write` 工具能否直接寫 PDF | 理論上可寫極簡純文字 PDF，但不實用（binary stream、xref offset 精確度問題） |
+
+**skill 可用 ≠ 能執行**：`document-skills:pdf` 提供的是「如何寫 PDF 的知識」（SKILL.md），Claude 仍需 Bash 權限執行 Python/CLI 指令。Bot_Walter 的 settings.json allow 清單未開放通用 Bash，因此無法執行 skill 指導的操作。
+
+**若要啟用 PDF 生成**，需在 `settings.json` 新增：`"Bash(python3 -c *)"` 或 `"Bash(python3 /tmp/**)"` 等 pattern（需評估安全風險）。
+
+### 全案例審查結果
+
+| Case | 原預期 | 能力判斷 | 是否修改 | 修改摘要 |
+|------|--------|----------|----------|----------|
+| 1 | 成功回覆 | 能做（純文字回覆） | 否 | — |
+| 2 | 動態能力列表 | 能做（prompt_hook） | 否 | — |
+| 3 | 記憶寫入成功 | 能做（Write 在 allow） | 否 | — |
+| 4 | PDF 降級 → HTML 替代 | 正確：無法 PDF | 是 | 補充 skill 調查結論，明確說明「skill 可用但 Bash 不可用」的根因 |
+| 5 | 工具拒絕說明 | 正確（受限環境測試） | 是 | 新增「測試環境前置條件」欄位，明確區分正常 vs 受限環境 |
+| 6 | 排程建立成功 | 能做（schedule_tool 在 allow） | 否 | — |
+| 7 | FTUE 引導 | 正確（行為測試） | 否 | — |
+| 8 | 漸進式拒絕 | 正確（行為測試） | 否 | — |
+| 9 | 逐功能 demo | 能做（行為測試） | 否 | — |
+| 10 | 記憶失敗降級 | 正確（受限環境測試） | 是 | 新增「測試環境前置條件」欄位 |
+| 11 | 不宣告 scheduler | 正確（受限環境測試） | 是 | 新增「測試環境前置條件」欄位 |
+| 12 | 完整宣告 | 能做（正常環境測試） | 否 | — |
 
 ---
 
@@ -63,10 +104,11 @@
 | 欄位 | 內容 |
 |------|------|
 | 觸發訊息 | `@Bot_Walter 請介紹 opentree 專案，用 pdf 回傳` |
-| 預期行為 | Bot 主動告知「目前無 PDF 轉換工具授權」（Bash allow 清單無 wkhtmltopdf / pdfkit 等 pattern），說明具體原因；主動提出 HTML 替代方案；若使用者同意（或 Bot 主動決定），實際執行：用 Write 工具建立 HTML 檔案，再呼叫 upload_tool 上傳到當前 thread；不靜默失敗也不假裝生成了 PDF |
-| 驗證點 | 回覆包含「無法直接生成 PDF」的說明；說明原因為「無 PDF 轉換工具的 Bash 授權」（而非 Bash 全鎖）；主動提出 HTML/Markdown 替代方案；若執行替代方案，thread 中出現 HTML 附件（upload_tool 上傳成功）或 Markdown 格式的 opentree 介紹；不出現「已為你生成 PDF」的假成功 |
+| 預期行為 | Bot 主動告知「目前無法直接生成 PDF」，說明具體原因（`document-skills:pdf` skill 可用但 settings.json 未授權 `Bash(python*)` 執行 reportlab 等 PDF 庫）；主動提出 HTML 替代方案；若使用者同意（或 Bot 主動決定），實際執行：用 Write 工具建立 HTML 檔案，再呼叫 upload_tool 上傳到當前 thread；不靜默失敗也不假裝生成了 PDF |
+| 驗證點 | 回覆包含「無法直接生成 PDF」的說明；說明原因涉及工具執行權限限制（而非 skill 不存在或 Bash 全鎖）；主動提出 HTML/Markdown 替代方案；若執行替代方案，thread 中出現 HTML 附件（upload_tool 上傳成功）或 Markdown 格式的 opentree 介紹；不出現「已為你生成 PDF」的假成功 |
 | 備註 | **更新原因**：v0.5.1 修復 settings.json 格式後，Write 工具和 upload_tool 均在 allow 清單中，Bot 實際上有能力生成 HTML 並上傳。原案例「Bash 全鎖降級」是基於 v0.5.0 的 bug；現在應測試「部分能力可用時的積極替代」行為 |
-| 來源 | ai-room thread 1776063833.594929，ts=1776064410.932109 → ts=1776064415.974249；能力調查：bot_walter settings.json（v0.5.1 修復後） |
+| 修改原因 | 2026-04-15 能力審查：`document-skills:pdf` skill 已全域安裝且 `reportlab` v4.4.10 已安裝於系統，但 Bot_Walter settings.json allow 清單僅含特定 `uv run --directory *:*xxx_tool*` 和 `alloy *` pattern，**無 `Bash(python*)` 通用權限**，因此 Bot 無法執行 skill 指導的 Python 腳本生成 PDF。skill 可用 ≠ 能執行。驗證點措辭從「無 PDF 轉換工具的 Bash 授權」修正為更精確的「工具執行權限限制」 |
+| 來源 | ai-room thread 1776063833.594929，ts=1776064410.932109 → ts=1776064415.974249；能力調查：bot_walter settings.json（v0.5.1 修復後）；PDF skill 定義：`~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/pdf/SKILL.md` |
 | 優先級 | P0 |
 | 狀態 | 待實作 |
 
@@ -76,9 +118,11 @@
 
 | 欄位 | 內容 |
 |------|------|
+| 測試環境前置條件 | **受限環境**：需使用比正常 Bot_Walter 更受限的 settings.json（移除 Read 和所有 Bash pattern），模擬 v0.5.0 工具全鎖場景。正常 Bot_Walter 環境下 Read 和部分 Bash 均可用，此 Case 不會觸發 |
 | 觸發訊息 | 任何需要 Read/Bash 工具的請求（在 don't ask mode 工具受限環境中） |
 | 預期行為 | Bot 不靜默失敗；主動告知使用者工具受到限制；說明影響範圍（哪些功能受影響）；不假裝操作成功 |
 | 驗證點 | 回覆中出現工具限制說明；不回傳偽造的成功結果；建議替代方案或通知管理員修復 |
+| 修改原因 | 2026-04-15 能力審查：新增「測試環境前置條件」欄位，明確說明此 Case 需要受限 settings.json 才能觸發，避免與正常 Bot_Walter 環境（Read/部分 Bash 可用）混淆 |
 | 來源 | ai-room thread 1776063833.594929，ts=1776064156.346579（Read/Bash 被拒後 bot 主動說明） |
 | 優先級 | P0 |
 | 狀態 | 待實作 |
@@ -141,9 +185,11 @@
 
 | 欄位 | 內容 |
 |------|------|
+| 測試環境前置條件 | **受限環境**：需使用比正常 Bot_Walter 更受限的 settings.json（移除 Write 權限），模擬 memory SOP 無法寫入的場景。正常 Bot_Walter 環境下 Write 工具可用（Case 3 驗證成功寫入），此 Case 不會觸發 |
 | 觸發訊息 | `@Bot_Walter 記住我喜歡科技新聞` （在 Read/Write 工具受限環境中） |
 | 預期行為 | Bot 無法寫入 memory.md 時，主動告知「記憶功能目前無法使用，但不影響本次對話」；說明可能原因（工具權限問題）；不假裝記住了 |
 | 驗證點 | 回覆包含記憶功能暫時無法使用的說明；包含「不影響對話」的安撫語；不回傳「已記住」的假確認；建議聯繫管理員或等待修復 |
+| 修改原因 | 2026-04-15 能力審查：新增「測試環境前置條件」欄位，明確說明此 Case 需要受限 settings.json（無 Write）才能觸發，與 Case 3（正常環境下記憶寫入成功）形成對照組 |
 | 來源 | ai-room thread 1776063833.594929，ts=1776064156.346579（修復前的行為，修復後此 case 不應再觸發） |
 | 優先級 | P0 |
 | 狀態 | 待實作 |
@@ -154,9 +200,11 @@
 
 | 欄位 | 內容 |
 |------|------|
+| 測試環境前置條件 | **受限環境**：需使用比正常 Bot_Walter 更受限的 settings.json（移除所有 `Bash(uv run --directory *:*schedule_tool*)` pattern），模擬 scheduler 不可用場景。正常 Bot_Walter 環境下 schedule_tool 在 allow 清單中（Case 6 驗證排程建立成功），此 Case 需特製 config |
 | 觸發訊息 | `@Bot_Walter 你能做哪些事？` （在 Bash 工具不在 allow 清單的環境中） |
 | 預期行為 | prompt_hook 讀取 settings.json，偵測 schedule_tool pattern 不在 allow 清單中；能力列表不出現「排程與提醒」功能，或加上「目前不可用」標記 |
 | 驗證點 | 回覆不包含「排程」或「提醒」等關鍵字（或明確標記不可用）；回覆包含 memory/query 等 core-dependent 功能；`_is_module_available('scheduler', allowed_tools)` 回傳 False |
+| 修改原因 | 2026-04-15 能力審查：新增「測試環境前置條件」欄位，明確說明此 Case 需要移除 schedule_tool Bash pattern 的 settings.json，與 Case 12（全工具可用）和 Case 6（排程成功）形成對照組 |
 | 來源 | opentree_dev thread 1776081176.143559（prompt_hook 設計討論，策略 C 實作） |
 | 優先級 | P1 |
 | 狀態 | 待實作 |

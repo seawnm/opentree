@@ -55,6 +55,13 @@ def _make_home(tmp_path: Path, *, bot_token: str = "xoxb-test", app_token: str =
 from opentree.runner.bot import Bot, _is_placeholder  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _mock_bwrap_check() -> None:
+    """Bot tests should not depend on local bwrap installation."""
+    with patch("opentree.runner.bot.check_bwrap_or_raise"):
+        yield
+
+
 # ===========================================================================
 # _load_tokens tests
 # ===========================================================================
@@ -212,6 +219,31 @@ class TestStartSequence:
         assert call_order == ["SlackAPI", "Dispatcher", "Receiver"]
         mock_slack_api_instance.auth_test.assert_called_once()
         mock_receiver_instance.start.assert_called_once()
+
+    def test_start_checks_bwrap_before_dispatcher(self, tmp_path):
+        home = _make_home(tmp_path)
+        bot = Bot(home)
+
+        mock_slack_api_instance = MagicMock()
+        mock_slack_api_instance.auth_test.return_value = {"user_id": "UBOT1"}
+        mock_slack_api_instance.bot_user_id = "UBOT1"
+
+        mock_dispatcher_instance = MagicMock()
+        mock_dispatcher_instance.task_queue = MagicMock()
+        mock_dispatcher_instance.task_queue.wait_for_drain = MagicMock(return_value=True)
+        mock_dispatcher_instance.exit_code = 0
+
+        mock_receiver_instance = MagicMock()
+
+        with (
+            patch("opentree.runner.bot.SlackAPI", return_value=mock_slack_api_instance),
+            patch("opentree.runner.bot.check_bwrap_or_raise") as mock_check,
+            patch("opentree.runner.bot.Dispatcher", return_value=mock_dispatcher_instance),
+            patch("opentree.runner.bot.Receiver", return_value=mock_receiver_instance),
+        ):
+            bot.start()
+
+        mock_check.assert_called_once_with()
 
     def test_start_with_auth_failure(self, tmp_path):
         """start() propagates RuntimeError when auth_test returns empty dict (no user_id)."""

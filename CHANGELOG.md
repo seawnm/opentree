@@ -15,6 +15,9 @@
 - **run.sh wrapper.pid + stop flag** — wrapper 寫入 `data/wrapper.pid` 供 `opentree stop` 定位；restart 迴圈前檢查 `.stop_requested` flag 防止重啟
 
 ### Changed
+- bot_walter deployment: switched from `uv run --directory` (source-coupled) to dedicated `.venv` with non-editable install for full instance isolation
+- `workspace/.codex` is now bound directly to `HOME/.codex` (`/home/codex/.codex`) inside bwrap. Codex uses `HOME/.codex` for **both** session state (`state_5.sqlite`, `sessions/`, rollout files) and auth (`auth.json`). Binding here ensures state persists across bwrap invocations so `codex exec resume` finds rollouts from previous turns. `auth.json` is overlaid RO on top via `--ro-bind-try` so the host credential is not writable inside the sandbox
+- `CodexProcess.run()` now pre-creates `{workspace}/.codex/` on host before launching bwrap to avoid "Can't mkdir: Read-only file system" for non-owner workspaces
 - **Dispatcher uses Codex CLI** — `dispatcher.py` now imports `CodexProcess` instead of `ClaudeProcess`. `sandboxed=True, is_owner=...` flags are forwarded from task context. `config.py` renames the primary field to `codex_command: str = "codex"`; the `claude_command` property returns `codex_command` as a deprecated alias for backward-compatible JSON configs. Design: [openspec/changes/20260416-codex-migration/](openspec/changes/20260416-codex-migration/)
 - **Instance 解耦** — run.sh 支援 `OPENTREE_CMD` 環境變數覆蓋 baked-in 命令，實現 instance 與 source project 完全解耦。`opentree init --cmd-mode bare` 可直接生成 bare `opentree` 命令。設計決策：[openspec/changes/20260407-decouple-instance/](openspec/changes/20260407-decouple-instance/)
 - **E2E 測試解耦** — `DOGI_DIR` 改為環境變數 `OPENTREE_E2E_DOGI_DIR`（未設定時 skip），移除對 slack-bot 的硬編碼路徑依賴
@@ -22,6 +25,9 @@
 - **`_resolve_opentree_cmd("auto")`** — 安裝後優先偵測 `bundled_modules/` 存在，跳過 pyproject.toml probe，避免撞到不相關的 project root
 
 ### Fixed
+- Fix `codex exec resume` CLI interface change: `--session-id` flag removed, SESSION_ID is now positional argument — second-turn conversations were returning "(no response)"
+- Fix Codex CLI entering interactive mode inside bwrap sandbox: add `--new-session` flag to `bwrap` args (calls `setsid(2)`) to detach from controlling TTY, preventing Codex from detecting a terminal and waiting for interactive stdin. Also add `stdin=subprocess.DEVNULL` to `Popen` call as defence-in-depth
+- Fix bwrap sandbox auth + multi-turn session resume: `workspace/.codex` is now bound to `HOME/.codex` (not `/workspace/.codex`). Codex uses `HOME/.codex` for both auth (`auth.json`) and session state (`state_5.sqlite`, rollout files). Previous design bound `workspace/.codex → /workspace/.codex` which Codex never reads; result was 401 Unauthorized for every request and `thread/resume failed: no rollout found` on every second-turn conversation
 - Remove Bash `mkdir` dependency in memory-sop.md; Write tool handles directory creation natively
 - Add conditional phrasing to capability declarations in personality rules to prevent over-promising
 - Add graceful degradation guidance for tool unavailability scenarios
