@@ -442,7 +442,7 @@ class Dispatcher:
                     )
 
                     memories = extract_memories(
-                        result.response_text,
+                        task.text,
                         user_name=resolved_name,
                         thread_ts=task.thread_ts,
                     )

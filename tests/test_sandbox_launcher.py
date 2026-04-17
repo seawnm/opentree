@@ -295,3 +295,36 @@ def test_build_bwrap_args_codex_bind_after_workspace_bind(tmp_path: Path) -> Non
     # HOME/.codex bind target index
     codex_target_idx = args.index("/home/codex/.codex")
     assert codex_target_idx > ws_idx, ".codex bind must appear after workspace bind"
+
+
+def test_build_bwrap_args_memory_dir_bound_ro(tmp_path):
+    """memory_dir is bound read-only so Codex can read memory.md inside sandbox."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    memory_dir = tmp_path / "data" / "memory"
+    memory_dir.mkdir(parents=True)
+
+    args = build_bwrap_args(["codex", "exec"], str(workspace), "/home/test",
+                             memory_dir=str(memory_dir))
+    triples = [args[i:i+3] for i in range(len(args) - 2)]
+    assert ["--ro-bind", str(memory_dir), str(memory_dir)] in triples
+
+
+def test_build_bwrap_args_memory_dir_skipped_when_missing(tmp_path):
+    """memory_dir is not bound when the directory doesn't exist on host."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    missing_dir = str(tmp_path / "data" / "memory")  # does not exist
+
+    args = build_bwrap_args(["codex", "exec"], str(workspace), "/home/test",
+                             memory_dir=missing_dir)
+    assert missing_dir not in args
+
+
+def test_build_bwrap_args_memory_dir_none_is_ok(tmp_path):
+    """build_bwrap_args works without memory_dir (backward compat)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    args = build_bwrap_args(["codex", "exec"], str(workspace), "/home/test")
+    assert isinstance(args, list)
+    assert args[0] == "bwrap"

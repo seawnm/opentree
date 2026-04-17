@@ -42,6 +42,7 @@
   - **admin_users docstring 修正**：空 tuple 語意從「所有人都是 admin」修正為「無人有 owner 權限」
   - **回歸測試**：新增 `test_permission_completeness.py`（18 tests）+ `test_settings_coverage.py`（6 tests）確保權限完整性
 - **init 缺 `data/logs/` 目錄** — nohup redirect 在 run.sh mkdir 之前執行導致靜默失敗，init 現在建立完整目錄結構
+- Fix cross-thread memory: bind `data/memory/` into bwrap sandbox (via `--ro-bind` at same host path) so Codex can read `memory.md` inside the sandbox; `memory_extractor` now scans user message (`task.text`) instead of bot response (`result.response_text`) to prevent garbage entries from bot confirmation phrases
 
 ### Security
 

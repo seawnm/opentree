@@ -244,11 +244,13 @@ class CodexProcess:
             sandboxed=self._sandboxed,
         )
         if self._sandboxed:
+            memory_dir = str(Path(self._cwd).parent / "data" / "memory")
             args = build_bwrap_args(
                 args,
                 self._cwd,
                 os.environ.get("HOME", str(Path.home())),
                 owner=self._is_owner,
+                memory_dir=memory_dir,
             )
         env = _build_safe_env(self._extra_env)
 

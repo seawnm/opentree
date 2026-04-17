@@ -52,6 +52,7 @@ def build_bwrap_args(
     workspace_path: str,
     home: str,
     owner: bool = False,
+    memory_dir: str | None = None,
 ) -> list[str]:
     """Build the complete ``bwrap`` command line.
 
@@ -63,6 +64,7 @@ def build_bwrap_args(
       /home/codex/.claude          — bind from real ~/.claude (RW)
       /tmp                         — tmpfs
       /tmp/opentree                — bind from host (RW, if it exists)
+      {memory_dir}                 — memory dir (RO bind at same host path, if provided and exists)
 
     Codex uses HOME/.codex for BOTH authentication (auth.json) and persistent state
     (state_5.sqlite, sessions/, rollout files for resume).  workspace/.codex is bound
@@ -126,6 +128,12 @@ def build_bwrap_args(
     tmp_opentree = "/tmp/opentree"
     if Path(tmp_opentree).exists():
         bind_parts.extend(["--bind", tmp_opentree, tmp_opentree])
+
+    # Bind memory directory RO so Codex can read memory.md inside sandbox.
+    # The system prompt references the host absolute path, so we bind it at
+    # the same path inside the sandbox.
+    if memory_dir is not None and Path(memory_dir).exists():
+        bind_parts.extend(["--ro-bind", memory_dir, memory_dir])
 
     # .claude is mounted under the tmpfs HOME, not under /workspace,
     # so bwrap never needs to mkdir inside a read-only bind.
