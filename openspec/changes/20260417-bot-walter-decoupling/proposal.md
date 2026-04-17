@@ -60,3 +60,36 @@ Per-instance isolation is maintained because each bot instance has its own works
 - `src/opentree/runner/codex_process.py` — pre-create workspace/.codex, resume positional arg,
   stdin=DEVNULL
 - `workspace/AGENTS.md` — Traditional Chinese language preference added to owner block
+
+## Additional Change: Cross-Thread Memory Fix
+
+Discovered and fixed during smoke testing: long-term memory was not persisting
+across Slack threads.
+
+### Root Cause A (Critical): bwrap sandbox cannot read memory.md
+
+The system prompt injects `記憶檔案：{opentree_home}/data/memory/{user_id}/memory.md`
+but the bwrap sandbox only bind-mounted `workspace/ → /workspace`. The host path
+`/mnt/e/develop/mydev/...` does not exist inside bwrap, so Codex's Read tool always
+failed silently — memory was never injected into the conversation.
+
+Fix: `build_bwrap_args()` now accepts an optional `memory_dir` parameter. When
+provided and the directory exists on the host, it is bound read-only at the same
+absolute path (`--ro-bind {memory_dir} {memory_dir}`), so the path in the system
+prompt resolves correctly inside the sandbox.
+
+### Root Cause B (Medium): memory_extractor scanned bot response, not user message
+
+`dispatcher.py` called `extract_memories(result.response_text, ...)` — scanning the
+BOT's own reply text. Bot confirmation phrases like "了，在這段對話裡我會用這兩點："
+matched the 記住/remember regex, filling memory.md with garbage pinned entries
+instead of real user preferences.
+
+Fix: Changed to `extract_memories(task.text, ...)` so only the user's explicit
+"記住…" commands trigger memory extraction.
+
+### Scope additions
+- `src/opentree/runner/sandbox_launcher.py` — `memory_dir` RO bind parameter
+- `src/opentree/runner/codex_process.py` — derives and passes `memory_dir`
+- `src/opentree/runner/dispatcher.py` — scan `task.text` instead of `result.response_text`
+- `workspace/SMOKE_TEST_SOP.md` — TC-09 cross-thread memory test case added
