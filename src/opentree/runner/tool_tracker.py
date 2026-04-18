@@ -188,17 +188,71 @@ class ToolTracker:
                 items.append(f"🧠 {' + '.join(parts)}")
 
         category_counts: dict[str, int] = {}
+        category_previews: dict[str, list[str]] = {}
         for tool in self._tools:
-            category_counts[tool.category] = category_counts.get(tool.category, 0) + 1
+            cat = tool.category
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+            if tool.input_preview:
+                preview = tool.input_preview.strip().replace("\n", " ")
+                if preview:
+                    category_previews.setdefault(cat, []).append(preview)
+
+        def _pick_previews(cat: str, max_n: int = 2) -> list[str]:
+            previews = category_previews.get(cat, [])
+            # Deduplicate preserving order
+            seen: set[str] = set()
+            unique = []
+            for p in previews:
+                if p not in seen:
+                    seen.add(p)
+                    unique.append(p)
+            return unique[:max_n]
 
         if category_counts.get("task"):
-            items.append(f"📋 子任務 {category_counts['task']} 次")
+            count = category_counts["task"]
+            previews = _pick_previews("task", 1)
+            if previews:
+                desc = previews[0][:45] + "..." if len(previews[0]) > 45 else previews[0]
+                suffix = f" 等 {count} 個" if count > 1 else ""
+                items.append(f"📋 子任務 `{desc}`{suffix}")
+            else:
+                items.append(f"📋 子任務 {count} 次")
+
         if category_counts.get("bash"):
-            items.append(f"💻 執行指令 {category_counts['bash']} 次")
+            count = category_counts["bash"]
+            previews = _pick_previews("bash", 2)
+            if previews:
+                parts = []
+                for p in previews:
+                    parts.append(f"`{p[:40] + '...' if len(p) > 40 else p}`")
+                suffix = f" 等 {count} 個" if count > len(parts) else ""
+                items.append(f"💻 {', '.join(parts)}{suffix}")
+            else:
+                items.append(f"💻 執行指令 {count} 次")
+
         if category_counts.get("web"):
-            items.append(f"🌐 搜尋網路 {category_counts['web']} 次")
+            count = category_counts["web"]
+            previews = _pick_previews("web", 2)
+            if previews:
+                parts = []
+                for p in previews:
+                    parts.append(f'"{p[:30] + "..." if len(p) > 30 else p}"')
+                suffix = f" 等 {count} 筆" if count > len(parts) else ""
+                items.append(f"🌐 搜尋 {', '.join(parts)}{suffix}")
+            else:
+                items.append(f"🌐 搜尋網路 {count} 次")
+
         if category_counts.get("mcp"):
-            items.append(f"🧩 調用工具 {category_counts['mcp']} 次")
+            count = category_counts["mcp"]
+            previews = _pick_previews("mcp", 1)
+            if previews:
+                tool_names = list(dict.fromkeys(
+                    t.name for t in self._tools if t.category == "mcp"
+                ))[:2]
+                items.append(f"🧩 {', '.join(tool_names)} 等 {count} 次" if count > 1 else f"🧩 {', '.join(tool_names)}")
+            else:
+                items.append(f"🧩 調用工具 {count} 次")
+
         other_count = category_counts.get("other", 0)
         if other_count:
             items.append(f"🔧 其他操作 {other_count} 次")
@@ -229,13 +283,38 @@ class ToolTracker:
         }
 
     def _format_tool_entry(self, tool: ToolUse, include_duration: bool) -> str:
+        preview = (tool.input_preview or "").strip().replace("\n", " ")
+        dur = f" ({tool.duration:.1f}s)" if include_duration else ""
+
+        if tool.category == "web":
+            if preview:
+                truncated = preview[:35] + "..." if len(preview) > 35 else preview
+                return f"搜尋：{truncated}{dur}"
+            return f"WebSearch{dur}"
+
+        if tool.category == "bash":
+            if preview:
+                truncated = preview[:50] + "..." if len(preview) > 50 else preview
+                return f"{truncated}{dur}"
+            return f"執行指令{dur}"
+
+        if tool.category == "mcp":
+            label = tool.name
+            if preview and len(preview) < 60:
+                return f"{label}: {preview}{dur}"
+            elif preview:
+                return f"{label}: {preview[:30]}...{dur}"
+            return f"{label}{dur}"
+
+        if tool.category == "task":
+            if preview:
+                truncated = preview[:50] + "..." if len(preview) > 50 else preview
+                return f"子任務 `{truncated}`{dur}"
+            return f"子任務{dur}"
+
+        # fallback (other)
         label = tool.name
-        preview = (tool.input_preview or "").strip()
         if preview:
-            preview = preview.replace("\n", " ")
-            if len(preview) > 60:
-                preview = preview[:57] + "..."
-            label = f"{label} `{preview}`"
-        if include_duration:
-            return f"{label} ({tool.duration:.1f}s)"
-        return label
+            truncated = preview[:40] + "..." if len(preview) > 40 else preview
+            return f"{label} `{truncated}`{dur}"
+        return f"{label}{dur}"

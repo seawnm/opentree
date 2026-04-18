@@ -20,6 +20,8 @@
 - **run.sh wrapper.pid + stop flag** — wrapper 寫入 `data/wrapper.pid` 供 `opentree stop` 定位；restart 迴圈前檢查 `.stop_requested` flag 防止重啟
 
 ### Changed
+- Progress timeline now shows WebSearch query keywords and Bash command previews instead of generic phase labels
+- Completion summary now includes representative query/command content for web search and bash tools
 - bot_walter deployment: switched from `uv run --directory` (source-coupled) to dedicated `.venv` with non-editable install for full instance isolation
 - `workspace/.codex` is now bound directly to `HOME/.codex` (`/home/codex/.codex`) inside bwrap. Codex uses `HOME/.codex` for **both** session state (`state_5.sqlite`, `sessions/`, rollout files) and auth (`auth.json`). Binding here ensures state persists across bwrap invocations so `codex exec resume` finds rollouts from previous turns. `auth.json` is overlaid RO on top via `--ro-bind-try` so the host credential is not writable inside the sandbox
 - `CodexProcess.run()` now pre-creates `{workspace}/.codex/` on host before launching bwrap to avoid "Can't mkdir: Read-only file system" for non-owner workspaces
