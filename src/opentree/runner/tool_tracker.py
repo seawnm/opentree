@@ -48,6 +48,9 @@ _WORK_PHASE_LABEL = {
     "other": "🔧 處理中",
 }
 
+TIMELINE_HEAD_COUNT = 3
+TIMELINE_TAIL_COUNT = 3
+
 
 class ToolTracker:
     """Tracks tool usage and coarse thinking activity for Slack summaries."""
@@ -145,7 +148,17 @@ class ToolTracker:
         return "Tool timeline:\n" + "\n".join(lines)
 
     def build_progress_timeline(self, max_entries: int = 6) -> list[TimelineEntry]:
-        """Build timeline entries for the in-progress Slack panel."""
+        """Build timeline entries for the in-progress Slack panel.
+
+        Applies two optimisations:
+        1. Same-category grouping: consecutive tools with the same category
+           whose ``started_at`` values are within ±1 second are merged into a
+           single entry (with a count when > 1).
+        2. Head/tail folding: when the entry count would exceed *max_entries*,
+           the first ``TIMELINE_HEAD_COUNT`` and last ``TIMELINE_TAIL_COUNT``
+           entries are kept and a "略過 N 個動作" separator is inserted in the
+           middle instead of simply slicing off the tail.
+        """
         entries: list[TimelineEntry] = []
         for kind, seconds in self._thinking_entries[-1:]:
             if kind == "deep_thinking":
@@ -153,13 +166,15 @@ class ToolTracker:
             else:
                 entries.append(TimelineEntry("🧠", f"思考 ({seconds} 秒)"))
 
-        tools = self._tools[-max_entries:]
+        # Collect tools to display (include in-progress tool if any).
+        tools: list[ToolUse] = list(self._tools)
         if self._current is not None:
-            tools = (tools + [self._current])[-max_entries:]
+            tools = tools + [self._current]
 
-        for tool in tools:
-            icon = _CATEGORY_ICON.get(tool.category, "🔧")
-            text = self._format_tool_entry(tool, include_duration=tool.ended_at > 0)
+        # Group consecutive same-category tools within ±1 second.
+        for group in self._merge_same_type_groups(tools):
+            icon = _CATEGORY_ICON.get(group[0].category, "🔧")
+            text = self._format_group(group)
             entries.append(TimelineEntry(icon, text))
 
         if self._thinking_started_at > 0:
@@ -170,7 +185,33 @@ class ToolTracker:
         if self._generating:
             entries.append(TimelineEntry("📝", "生成回覆中..."))
 
-        return entries[-max_entries:]
+        # Apply head/tail folding when entries exceed max_entries.
+        # The folded output is always TIMELINE_HEAD_COUNT + 1 skip +
+        # TIMELINE_TAIL_COUNT entries (= 7 by default), which may slightly
+        # exceed max_entries — that is intentional.  Dynamic reduction of
+        # head/tail only happens when max_entries is so small that even a
+        # minimal 1+skip+1 fold wouldn't fit (pathological edge case).
+        if len(entries) > max_entries:
+            head = TIMELINE_HEAD_COUNT
+            tail = TIMELINE_TAIL_COUNT
+            # Minimum supported fold: 1 head + skip + 1 tail = 3.
+            # Only reduce when max_entries cannot accommodate this minimum.
+            if max_entries < 3:
+                # Very constrained: reduce tail then head to fit within max_entries.
+                while head + 1 + tail > max_entries and (head > 0 or tail > 0):
+                    if tail > 0:
+                        tail -= 1
+                    elif head > 0:
+                        head -= 1
+            hidden = len(entries) - head - tail
+            if hidden > 0:
+                folded: list[TimelineEntry] = []
+                folded.extend(entries[:head])
+                folded.append(TimelineEntry("…", f"略過 {hidden} 個動作"))
+                folded.extend(entries[len(entries) - tail:])
+                entries = folded
+
+        return entries
 
     def build_completion_summary(self) -> list[str]:
         """Build summary lines for the completion progress message."""
@@ -281,6 +322,56 @@ class ToolTracker:
                 for t in self._tools
             ],
         }
+
+    @staticmethod
+    def _merge_same_type_groups(tools: list[ToolUse]) -> list[list[ToolUse]]:
+        """Split *tools* into groups of consecutive same-category items.
+
+        Two adjacent tools belong to the same group when:
+        - they share the same ``category``, **and**
+        - their ``started_at`` values are within 1.0 second of each other.
+        """
+        groups: list[list[ToolUse]] = []
+        for tool in tools:
+            if (
+                groups
+                and groups[-1][0].category == tool.category
+                and abs(tool.started_at - groups[-1][-1].started_at) <= 1.0
+            ):
+                groups[-1].append(tool)
+            else:
+                groups.append([tool])
+        return groups
+
+    def _format_group(self, group: list[ToolUse]) -> str:
+        """Format a merged group of same-category tools into a single label."""
+        if len(group) == 1:
+            tool = group[0]
+            return self._format_tool_entry(tool, include_duration=tool.ended_at > 0)
+
+        count = len(group)
+        category = group[0].category
+
+        if category == "web":
+            first_preview = (group[0].input_preview or "").strip().replace("\n", " ")
+            if first_preview:
+                truncated = first_preview[:25] + "..." if len(first_preview) > 25 else first_preview
+                return f"搜尋：{truncated} 等 {count} 筆"
+            return f"搜尋 {count} 次"
+
+        if category == "bash":
+            return f"執行 {count} 個指令"
+
+        if category == "task":
+            return f"子任務 {count} 個"
+
+        if category == "mcp":
+            tool_names = list(dict.fromkeys(t.name for t in group))
+            if len(tool_names) == 1:
+                return f"{tool_names[0]} {count} 次"
+            return f"調用工具 {count} 次"
+
+        return f"操作 {count} 次"
 
     def _format_tool_entry(self, tool: ToolUse, include_duration: bool) -> str:
         preview = (tool.input_preview or "").strip().replace("\n", " ")

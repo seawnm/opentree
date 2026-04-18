@@ -358,3 +358,219 @@ class TestToolTrackerGetSummary:
         tracker = ToolTracker()
         summary = tracker.get_summary()
         assert set(summary.keys()) == {"tool_count", "total_time", "tools"}
+
+
+# ---------------------------------------------------------------------------
+# ToolTracker — _merge_same_type_groups (grouping helper)
+# ---------------------------------------------------------------------------
+
+
+class TestMergeSameTypeGroups:
+    """Tests for _merge_same_type_groups() static method."""
+
+    def test_three_web_searches_within_half_second_merged(self):
+        """3 consecutive web searches within 0.5s → single group of 3."""
+        t0 = 1000.0
+        tools = [
+            ToolUse(name="WebSearch", started_at=t0 + 0.0, ended_at=t0 + 0.3, category="web", input_preview="query1"),
+            ToolUse(name="WebSearch", started_at=t0 + 0.2, ended_at=t0 + 0.5, category="web", input_preview="query2"),
+            ToolUse(name="WebSearch", started_at=t0 + 0.4, ended_at=t0 + 0.7, category="web", input_preview="query3"),
+        ]
+        groups = ToolTracker._merge_same_type_groups(tools)
+        assert len(groups) == 1
+        assert len(groups[0]) == 3
+
+    def test_bash_then_web_within_half_second_not_merged(self):
+        """bash then web within 0.5s → separate groups (different category)."""
+        t0 = 1000.0
+        tools = [
+            ToolUse(name="Bash", started_at=t0 + 0.0, ended_at=t0 + 0.3, category="bash"),
+            ToolUse(name="WebSearch", started_at=t0 + 0.2, ended_at=t0 + 0.5, category="web"),
+        ]
+        groups = ToolTracker._merge_same_type_groups(tools)
+        assert len(groups) == 2
+        assert groups[0][0].category == "bash"
+        assert groups[1][0].category == "web"
+
+    def test_same_category_beyond_one_second_not_merged(self):
+        """Same category but >1s apart → separate groups."""
+        t0 = 1000.0
+        tools = [
+            ToolUse(name="WebSearch", started_at=t0 + 0.0, ended_at=t0 + 0.3, category="web"),
+            ToolUse(name="WebSearch", started_at=t0 + 2.0, ended_at=t0 + 2.3, category="web"),
+        ]
+        groups = ToolTracker._merge_same_type_groups(tools)
+        assert len(groups) == 2
+
+    def test_empty_input_returns_empty(self):
+        """Empty tool list → empty group list."""
+        assert ToolTracker._merge_same_type_groups([]) == []
+
+    def test_single_tool_returns_single_group(self):
+        """Single tool → one group containing that tool."""
+        tools = [ToolUse(name="Bash", started_at=100.0, ended_at=101.0, category="bash")]
+        groups = ToolTracker._merge_same_type_groups(tools)
+        assert len(groups) == 1
+        assert groups[0][0].name == "Bash"
+
+    def test_exactly_one_second_apart_merged(self):
+        """Tools exactly 1.0 second apart are still merged (boundary inclusive)."""
+        t0 = 1000.0
+        tools = [
+            ToolUse(name="WebSearch", started_at=t0 + 0.0, category="web"),
+            ToolUse(name="WebSearch", started_at=t0 + 1.0, category="web"),
+        ]
+        groups = ToolTracker._merge_same_type_groups(tools)
+        assert len(groups) == 1
+
+    def test_interleaved_categories_split_correctly(self):
+        """bash-web-bash sequence → 3 separate groups."""
+        t0 = 1000.0
+        tools = [
+            ToolUse(name="Bash", started_at=t0 + 0.0, category="bash"),
+            ToolUse(name="WebSearch", started_at=t0 + 0.1, category="web"),
+            ToolUse(name="Bash", started_at=t0 + 0.2, category="bash"),
+        ]
+        groups = ToolTracker._merge_same_type_groups(tools)
+        assert len(groups) == 3
+
+
+# ---------------------------------------------------------------------------
+# ToolTracker — build_progress_timeline with grouping
+# ---------------------------------------------------------------------------
+
+
+class TestBuildProgressTimelineGrouping:
+    """Tests for same-type grouping in build_progress_timeline()."""
+
+    def test_three_web_searches_produce_single_entry_with_count(self):
+        """3 consecutive web searches within 0.5s → single timeline entry mentioning count."""
+        tracker = ToolTracker()
+        t0 = 1000.0
+        tracker._tools = [
+            ToolUse(name="WebSearch", started_at=t0 + 0.0, ended_at=t0 + 0.3, category="web", input_preview="query1"),
+            ToolUse(name="WebSearch", started_at=t0 + 0.2, ended_at=t0 + 0.5, category="web", input_preview="query2"),
+            ToolUse(name="WebSearch", started_at=t0 + 0.4, ended_at=t0 + 0.7, category="web", input_preview="query3"),
+        ]
+        entries = tracker.build_progress_timeline(max_entries=6)
+        # All 3 web searches should collapse into a single entry.
+        web_entries = [e for e in entries if e.icon == "🌐"]
+        assert len(web_entries) == 1
+        # The label should mention the count of 3.
+        assert "3" in web_entries[0].text
+
+    def test_bash_then_web_within_half_second_produce_two_entries(self):
+        """bash then web within 0.5s → two separate timeline entries."""
+        tracker = ToolTracker()
+        t0 = 1000.0
+        tracker._tools = [
+            ToolUse(name="Bash", started_at=t0 + 0.0, ended_at=t0 + 0.3, category="bash"),
+            ToolUse(name="WebSearch", started_at=t0 + 0.2, ended_at=t0 + 0.5, category="web"),
+        ]
+        entries = tracker.build_progress_timeline(max_entries=6)
+        assert len(entries) == 2
+        assert entries[0].icon == "💻"
+        assert entries[1].icon == "🌐"
+
+    def test_two_bash_commands_grouped(self):
+        """2 bash commands within 1s → single entry with count."""
+        tracker = ToolTracker()
+        t0 = 1000.0
+        tracker._tools = [
+            ToolUse(name="Bash", started_at=t0 + 0.0, ended_at=t0 + 0.4, category="bash"),
+            ToolUse(name="Bash", started_at=t0 + 0.5, ended_at=t0 + 0.9, category="bash"),
+        ]
+        entries = tracker.build_progress_timeline(max_entries=6)
+        bash_entries = [e for e in entries if e.icon == "💻"]
+        assert len(bash_entries) == 1
+        assert "2" in bash_entries[0].text
+
+
+# ---------------------------------------------------------------------------
+# ToolTracker — build_progress_timeline with head/tail folding
+# ---------------------------------------------------------------------------
+
+
+class TestBuildProgressTimelineFolding:
+    """Tests for head/tail folding in build_progress_timeline()."""
+
+    def test_ten_entries_with_max_six_folds_correctly(self):
+        """10 distinct tools with max_entries=6 → head(3) + skip + tail(3) = 7 entries.
+
+        The folded output is head+skip+tail = 7 entries, which may slightly
+        exceed max_entries.  max_entries only controls the trigger for folding,
+        not the size of the folded output.
+        """
+        tracker = ToolTracker()
+        t0 = 1000.0
+        # Use widely spaced timestamps so no grouping occurs.
+        tracker._tools = [
+            ToolUse(name=f"Tool{i}", started_at=t0 + i * 10.0, ended_at=t0 + i * 10.0 + 1.0, category="other")
+            for i in range(10)
+        ]
+        entries = tracker.build_progress_timeline(max_entries=6)
+        # head(3) + "略過" + tail(3) = 7 entries
+        assert len(entries) == 7
+
+    def test_ten_entries_skip_entry_mentions_hidden_count(self):
+        """Skip entry text includes the correct hidden count."""
+        tracker = ToolTracker()
+        t0 = 1000.0
+        tracker._tools = [
+            ToolUse(name=f"Tool{i}", started_at=t0 + i * 10.0, ended_at=t0 + i * 10.0 + 1.0, category="other")
+            for i in range(10)
+        ]
+        entries = tracker.build_progress_timeline(max_entries=6)
+        skip_entries = [e for e in entries if "略過" in e.text]
+        assert len(skip_entries) == 1
+        assert "4" in skip_entries[0].text  # 10 - 3 - 3 = 4 hidden
+
+    def test_folded_head_entries_are_first_tools(self):
+        """After folding, first 3 entries correspond to the first 3 tools."""
+        tracker = ToolTracker()
+        t0 = 1000.0
+        tracker._tools = [
+            ToolUse(name=f"T{i}", started_at=t0 + i * 10.0, ended_at=t0 + i * 10.0 + 1.0, category="other")
+            for i in range(10)
+        ]
+        entries = tracker.build_progress_timeline(max_entries=6)
+        # First 3 entries should reference T0, T1, T2
+        for i, entry in enumerate(entries[:3]):
+            assert f"T{i}" in entry.text
+
+    def test_folded_tail_entries_are_last_tools(self):
+        """After folding, last 3 entries correspond to the last 3 tools."""
+        tracker = ToolTracker()
+        t0 = 1000.0
+        tracker._tools = [
+            ToolUse(name=f"T{i}", started_at=t0 + i * 10.0, ended_at=t0 + i * 10.0 + 1.0, category="other")
+            for i in range(10)
+        ]
+        entries = tracker.build_progress_timeline(max_entries=6)
+        # Last 3 entries should reference T7, T8, T9
+        for i, entry in enumerate(entries[-3:], start=7):
+            assert f"T{i}" in entry.text
+
+    def test_no_folding_when_within_max_entries(self):
+        """No skip entry when tool count <= max_entries."""
+        tracker = ToolTracker()
+        t0 = 1000.0
+        tracker._tools = [
+            ToolUse(name=f"T{i}", started_at=t0 + i * 10.0, ended_at=t0 + i * 10.0 + 1.0, category="other")
+            for i in range(4)
+        ]
+        entries = tracker.build_progress_timeline(max_entries=6)
+        skip_entries = [e for e in entries if "略過" in e.text]
+        assert skip_entries == []
+
+    def test_skip_entry_icon_is_ellipsis(self):
+        """Skip (fold) entry has the '…' icon."""
+        tracker = ToolTracker()
+        t0 = 1000.0
+        tracker._tools = [
+            ToolUse(name=f"T{i}", started_at=t0 + i * 10.0, ended_at=t0 + i * 10.0 + 1.0, category="other")
+            for i in range(10)
+        ]
+        entries = tracker.build_progress_timeline(max_entries=6)
+        skip_entries = [e for e in entries if "略過" in e.text]
+        assert skip_entries[0].icon == "…"
