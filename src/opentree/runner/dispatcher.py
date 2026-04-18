@@ -851,6 +851,42 @@ class Dispatcher:
         """
         return self._task_queue.get_stats()
 
+    def cancel_pending_tasks(self) -> int:
+        """Cancel all pending tasks and notify users via Slack.
+
+        Called during graceful shutdown before wait_for_drain().
+        For each pending task:
+        - Deletes the "queued" ack message (queued_ack_ts) if present
+        - Sends a cancellation notice to the task's thread
+
+        Returns:
+            Number of tasks that were cancelled.
+        """
+        pending = self._task_queue.drain_pending()
+        if not pending:
+            return 0
+
+        for task in pending:
+            try:
+                # Remove the "queued" ack message to avoid confusion
+                if task.queued_ack_ts:
+                    try:
+                        self._slack.delete_message(task.channel_id, task.queued_ack_ts)
+                    except Exception:
+                        pass  # best-effort
+
+                # Notify user that task was cancelled
+                self._slack.send_message(
+                    task.channel_id,
+                    "⚠️ Bot 正在重啟，你的請求已取消。重啟完成後請重新發送。",
+                    thread_ts=task.thread_ts,
+                )
+            except Exception as exc:
+                logger.warning("Failed to notify pending task %s: %s", task.task_id, exc)
+
+        logger.info("Cancelled %d pending tasks with user notification", len(pending))
+        return len(pending)
+
     @property
     def task_queue(self) -> TaskQueue:
         """Expose the task queue for external use (e.g. graceful shutdown).

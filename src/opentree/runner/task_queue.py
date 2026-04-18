@@ -164,6 +164,20 @@ class TaskQueue:
         with self._lock:
             return len(self._pending)
 
+    def drain_pending(self) -> list[Task]:
+        """Remove and return all pending tasks (for shutdown notification).
+
+        Caller is responsible for notifying users. This method is safe to call
+        concurrently — it holds _lock while draining.
+
+        Returns:
+            List of tasks that were pending (now removed from queue).
+        """
+        with self._lock:
+            tasks = list(self._pending)
+            self._pending.clear()
+            return tasks
+
     def get_stats(self) -> dict:
         """Return queue statistics."""
         with self._lock:

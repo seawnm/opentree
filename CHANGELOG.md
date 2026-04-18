@@ -30,6 +30,7 @@
 - **`_resolve_opentree_cmd("auto")`** — 安裝後優先偵測 `bundled_modules/` 存在，跳過 pyproject.toml probe，避免撞到不相關的 project root
 
 ### Fixed
+- Notify users when pending tasks are cancelled during graceful shutdown (previously silently dropped)
 - Fix `codex exec resume` CLI interface change: `--session-id` flag removed, SESSION_ID is now positional argument — second-turn conversations were returning "(no response)"
 - Fix Codex CLI entering interactive mode inside bwrap sandbox: add `--new-session` flag to `bwrap` args (calls `setsid(2)`) to detach from controlling TTY, preventing Codex from detecting a terminal and waiting for interactive stdin. Also add `stdin=subprocess.DEVNULL` to `Popen` call as defence-in-depth
 - Fix bwrap sandbox auth + multi-turn session resume: `workspace/.codex` is now bound to `HOME/.codex` (not `/workspace/.codex`). Codex uses `HOME/.codex` for both auth (`auth.json`) and session state (`state_5.sqlite`, rollout files). Previous design bound `workspace/.codex → /workspace/.codex` which Codex never reads; result was 401 Unauthorized for every request and `thread/resume failed: no rollout found` on every second-turn conversation

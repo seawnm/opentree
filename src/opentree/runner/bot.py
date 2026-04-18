@@ -362,6 +362,9 @@ class Bot:
 
         # Drain tasks if dispatcher is available
         if self._dispatcher is not None:
+            # Notify and cancel pending tasks before draining running ones
+            self._dispatcher.cancel_pending_tasks()
+
             runner_config = self._runner_config if self._runner_config is not None else load_runner_config(self._home)
             drain_timeout = runner_config.drain_timeout
             drained = self._dispatcher.task_queue.wait_for_drain(timeout=drain_timeout)
