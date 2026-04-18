@@ -67,7 +67,7 @@ opentree init --bot-name "MyBot" --owner U12345 --cmd-mode bare
 | `--owner` | Yes | Comma-separated Slack User IDs (e.g. `U123,U456`) |
 | `--home` | No | Instance root directory (default: `~/.opentree/`) |
 | `--team-name` | No | Team name for placeholder resolution |
-| `--cmd-mode` | No | How run.sh invokes opentree: `auto`, `bare`, `uv-run` |
+| `--cmd-mode` | No | How run.sh invokes opentree: `auto`, `bare`, `uv-run`, `venv` |
 | `--force` | No | Re-initialize an existing instance |
 
 ### What init creates
@@ -229,8 +229,18 @@ The `--cmd-mode` option controls how `run.sh` invokes the `opentree` command. Th
 | Mode | run.sh command | Use case |
 |------|---------------|----------|
 | `auto` (default) | Source checkout -> `uv run --directory ...`; installed -> bare `opentree` | Most users |
-| `bare` | Always `opentree` | Production; requires `pip install` |
+| `bare` | Always `opentree` | Requires `pip install` and `opentree` on PATH |
 | `uv-run` | Always `uv run --directory ...` | Explicit source checkout binding |
+| `venv` | `<home>/.venv/bin/opentree` | **Recommended for production**: instance-local venv, fully isolated from source |
+
+**`venv` mode** is the recommended mode for running multiple production instances. Each instance has its own `.venv` containing a pinned version of opentree. Source code changes do **not** affect running instances until you explicitly redeploy via `scripts/deploy.sh`.
+
+```bash
+# Set up venv mode for a new instance
+python3 -m venv /path/to/instance/.venv
+/path/to/instance/.venv/bin/pip install '/path/to/opentree[slack]'
+opentree init --home /path/to/instance --bot-name MyBot --owner U123 --cmd-mode venv
+```
 
 ### Detection logic (auto mode)
 
@@ -399,6 +409,34 @@ opentree module refresh
 Without this step, the old unrestricted `Read`/`Write`/`Edit` entries remain in effect and the security fix is not activated.
 
 ## Updating
+
+### Automated deployment (recommended for venv-mode instances)
+
+Use `scripts/deploy.sh` to update one or all instances atomically. The script safely stops the wrapper (not just the bot), updates the package, re-initializes, and restarts — preventing zombie processes.
+
+```bash
+# Deploy all instances in instances.conf
+bash /path/to/opentree/scripts/deploy.sh --all
+
+# Deploy a specific instance
+bash /path/to/opentree/scripts/deploy.sh --target bot_COGI
+
+# Preview what would happen (dry-run)
+bash /path/to/opentree/scripts/deploy.sh --dry-run --all
+
+# Update package only, skip module re-init
+bash /path/to/opentree/scripts/deploy.sh --all --skip-init
+```
+
+Register instances in `instances.conf` at the opentree project root:
+
+```
+# Format: name:home_path:bot_name
+bot_COGI:/mnt/e/develop/mydev/project/trees/bot_COGI:COGI
+bot_DOGI:/mnt/e/develop/mydev/project/trees/bot_DOGI:DOGI
+```
+
+> **Why kill the wrapper, not the bot?** The wrapper runs a cleanup trap (`trap cleanup SIGTERM`) that cascades SIGTERM to the bot and watchdog, then waits for clean exit. Killing only the bot causes the wrapper to detect a crash (non-zero exit) and restart the old version — creating zombie processes. Always SIGTERM the wrapper first.
 
 ### Source checkout
 

@@ -177,13 +177,32 @@ deploy_instance() {
     # Step 7: Re-init (regenerate run.sh with correct BOT_CMD + update bundled modules)
     if [[ $SKIP_INIT -eq 0 ]]; then
         log "[$name] Re-initializing with --cmd-mode venv --force..."
-        run "$venv/bin/opentree" init \
-            --home "$home" \
-            --bot-name "$bot_name" \
-            --cmd-mode venv \
-            --force \
-            --non-interactive
-        log "[$name] run.sh regenerated (BOT_CMD -> $venv/bin/opentree)"
+
+        # Read owner IDs from existing runner.json (avoids requiring --owner in conf)
+        local owner_ids=""
+        local runner_json="$home/config/runner.json"
+        if [[ -f "$runner_json" ]]; then
+            owner_ids=$(python3 -c "
+import json, sys
+d = json.load(open('$runner_json'))
+ids = d.get('admin_users', d.get('owner_ids', []))
+print(','.join(ids))
+" 2>/dev/null || true)
+        fi
+
+        if [[ -z "$owner_ids" ]]; then
+            log "[$name] WARNING: no owner IDs found in runner.json — skipping init (use --skip-init to suppress)"
+            log "[$name] Add admin_users to $runner_json and re-run."
+        else
+            run "$venv/bin/opentree" init \
+                --home "$home" \
+                --bot-name "$bot_name" \
+                --owner "$owner_ids" \
+                --cmd-mode venv \
+                --force \
+                --non-interactive
+            log "[$name] run.sh regenerated (BOT_CMD -> $venv/bin/opentree)"
+        fi
     else
         log "[$name] Skipping opentree init (--skip-init)"
     fi
