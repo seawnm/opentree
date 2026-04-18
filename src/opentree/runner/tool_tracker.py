@@ -62,6 +62,7 @@ class ToolTracker:
         self._current: Optional[ToolUse] = None
         self._thinking_started_at: float = 0.0
         self._thinking_entries: list[tuple[str, int]] = []
+        self._thinking_excerpts: list[str] = []
         self._generating: bool = False
 
     def start_tool(
@@ -109,6 +110,11 @@ class ToolTracker:
             return
         kind = "deep_thinking" if deep else "thinking"
         self._thinking_entries.append((kind, duration))
+
+    def add_thinking_text(self, text: str) -> None:
+        """Store a thinking text excerpt for display in the completion summary."""
+        if text:
+            self._thinking_excerpts.append(text)
 
     def start_generating(self) -> None:
         """Mark that the model is writing the final response."""
@@ -227,6 +233,11 @@ class ToolTracker:
                     label = "深度思考" if kind == "deep_thinking" else "思考"
                     parts.append(f"{label} {seconds} 秒")
                 items.append(f"🧠 {' + '.join(parts)}")
+            if self._thinking_excerpts:
+                longest = max(self._thinking_excerpts, key=len, default="")
+                if longest:
+                    excerpt = longest[:80] + "..." if len(longest) > 80 else longest
+                    items.append(f"  💭 {excerpt}")
 
         category_counts: dict[str, int] = {}
         category_previews: dict[str, list[str]] = {}

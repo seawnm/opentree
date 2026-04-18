@@ -388,7 +388,7 @@ class TestGetResult:
     def test_get_result_keys_present(self):
         parser = StreamParser()
         result = parser.get_result()
-        required_keys = {"session_id", "response_text", "input_tokens", "output_tokens", "is_error", "error_message"}
+        required_keys = {"session_id", "response_text", "input_tokens", "output_tokens", "is_error", "error_message", "thinking_text"}
         assert required_keys == set(result.keys())
 
     def test_assistant_event_accumulates_text(self):
@@ -472,3 +472,67 @@ class TestHasResultEvent:
         parser.parse_line(_line({"type": "ping"}))
         parser.parse_line(_line({"type": "content_block_start", "content_block": {"type": "text"}}))
         assert parser.state.has_result_event is False
+
+
+# ---------------------------------------------------------------------------
+# StreamParser — content_block_delta thinking_delta accumulation
+# ---------------------------------------------------------------------------
+
+
+class TestContentBlockDeltaThinking:
+    """Tests for content_block_delta thinking_delta event handling."""
+
+    def test_thinking_delta_accumulates_text(self):
+        """content_block_delta with thinking_delta accumulates text in state.thinking_text."""
+        parser = StreamParser()
+        line = _line({
+            "type": "content_block_delta",
+            "delta": {"type": "thinking_delta", "thinking": "We need to check"}
+        })
+        parser.parse_line(line)
+        assert parser.state.thinking_text == "We need to check"
+
+    def test_multiple_thinking_deltas_concatenate(self):
+        """Multiple thinking_delta events are concatenated into thinking_text."""
+        parser = StreamParser()
+        for chunk in ["First ", "second ", "third"]:
+            parser.parse_line(_line({
+                "type": "content_block_delta",
+                "delta": {"type": "thinking_delta", "thinking": chunk}
+            }))
+        assert parser.state.thinking_text == "First second third"
+
+    def test_non_thinking_delta_does_not_affect_thinking_text(self):
+        """Non-thinking delta type does not modify thinking_text."""
+        parser = StreamParser()
+        parser.parse_line(_line({
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "some text"}
+        }))
+        assert parser.state.thinking_text == ""
+
+    def test_content_block_delta_returns_none(self):
+        """content_block_delta handler always returns None (no phase change)."""
+        parser = StreamParser()
+        result = parser.parse_line(_line({
+            "type": "content_block_delta",
+            "delta": {"type": "thinking_delta", "thinking": "thought"}
+        }))
+        assert result is None
+
+    def test_thinking_text_in_get_result(self):
+        """thinking_text accumulated in state is returned by get_result()."""
+        parser = StreamParser()
+        parser.parse_line(_line({
+            "type": "content_block_delta",
+            "delta": {"type": "thinking_delta", "thinking": "My thinking here"}
+        }))
+        result = parser.get_result()
+        assert "thinking_text" in result
+        assert result["thinking_text"] == "My thinking here"
+
+    def test_thinking_text_default_empty_in_get_result(self):
+        """get_result() returns empty string for thinking_text when no delta events."""
+        parser = StreamParser()
+        result = parser.get_result()
+        assert result.get("thinking_text", "") == ""

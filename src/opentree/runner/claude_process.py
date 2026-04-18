@@ -70,6 +70,7 @@ class ClaudeResult:
     is_timeout: bool = False
     exit_code: int = 0
     elapsed_seconds: float = 0.0
+    thinking_text: str = ""
 
 
 def _build_safe_env(
@@ -293,6 +294,7 @@ class ClaudeProcess:
             is_timeout=self._timed_out,
             exit_code=exit_code,
             elapsed_seconds=elapsed,
+            thinking_text=result_dict.get("thinking_text", ""),
         )
 
     def stop(self) -> None:

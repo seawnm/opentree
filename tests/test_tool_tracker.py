@@ -790,3 +790,85 @@ class TestFormatToolEntryInProgressDuration:
         assert "搜尋：" in text
         assert "Taiwan semiconductor" in text
         assert "執行中 12s" in text
+
+
+# ---------------------------------------------------------------------------
+# ToolTracker — add_thinking_text and build_completion_summary with excerpt
+# ---------------------------------------------------------------------------
+
+
+class TestThinkingExcerpt:
+    """Tests for thinking text excerpt in build_completion_summary()."""
+
+    def _make_tracker_with_thinking(self, seconds: int = 10) -> ToolTracker:
+        """Helper: tracker with one thinking entry."""
+        tracker = ToolTracker()
+        tracker._thinking_entries = [("thinking", seconds)]
+        return tracker
+
+    def test_add_thinking_text_then_summary_has_excerpt(self):
+        """add_thinking_text() then build_completion_summary() → 💭 sub-line."""
+        tracker = self._make_tracker_with_thinking()
+        tracker.add_thinking_text("We need to check if the file exists")
+        items = tracker.build_completion_summary()
+        excerpt_lines = [i for i in items if i.startswith("  💭")]
+        assert len(excerpt_lines) == 1
+        assert "We need to check if the file exists" in excerpt_lines[0]
+
+    def test_multiple_add_thinking_text_shows_longest(self):
+        """Multiple add_thinking_text() calls → longest text shown as excerpt."""
+        tracker = self._make_tracker_with_thinking()
+        tracker.add_thinking_text("Short")
+        tracker.add_thinking_text("This is a much longer thinking text that should be selected")
+        tracker.add_thinking_text("Medium length text here")
+        items = tracker.build_completion_summary()
+        excerpt_lines = [i for i in items if i.startswith("  💭")]
+        assert len(excerpt_lines) == 1
+        assert "This is a much longer thinking text" in excerpt_lines[0]
+
+    def test_no_thinking_text_no_excerpt_line(self):
+        """No add_thinking_text() calls → no 💭 line in summary."""
+        tracker = self._make_tracker_with_thinking()
+        items = tracker.build_completion_summary()
+        excerpt_lines = [i for i in items if i.startswith("  💭")]
+        assert excerpt_lines == []
+
+    def test_thinking_text_over_80_chars_truncated_with_ellipsis(self):
+        """Thinking text > 80 chars → truncated to 80 chars + '...'."""
+        tracker = self._make_tracker_with_thinking()
+        long_text = "A" * 90
+        tracker.add_thinking_text(long_text)
+        items = tracker.build_completion_summary()
+        excerpt_lines = [i for i in items if i.startswith("  💭")]
+        assert len(excerpt_lines) == 1
+        content = excerpt_lines[0][len("  💭 "):]
+        assert content == "A" * 80 + "..."
+
+    def test_thinking_text_exactly_80_chars_not_truncated(self):
+        """Thinking text exactly 80 chars → no ellipsis added."""
+        tracker = self._make_tracker_with_thinking()
+        text_80 = "B" * 80
+        tracker.add_thinking_text(text_80)
+        items = tracker.build_completion_summary()
+        excerpt_lines = [i for i in items if i.startswith("  💭")]
+        assert len(excerpt_lines) == 1
+        content = excerpt_lines[0][len("  💭 "):]
+        assert content == text_80
+        assert not content.endswith("...")
+
+    def test_excerpt_appears_after_thinking_line(self):
+        """💭 excerpt line appears immediately after the 🧠 thinking line."""
+        tracker = self._make_tracker_with_thinking(seconds=5)
+        tracker.add_thinking_text("some thinking")
+        items = tracker.build_completion_summary()
+        thinking_idx = next(i for i, x in enumerate(items) if "🧠" in x)
+        excerpt_idx = next(i for i, x in enumerate(items) if "💭" in x)
+        assert excerpt_idx == thinking_idx + 1
+
+    def test_excerpt_absent_when_no_thinking_entries(self):
+        """No thinking entries at all → no 💭 line even with thinking text."""
+        tracker = ToolTracker()
+        tracker.add_thinking_text("some text")
+        items = tracker.build_completion_summary()
+        excerpt_lines = [i for i in items if i.startswith("  💭")]
+        assert excerpt_lines == []

@@ -41,6 +41,7 @@ class ProgressState:
     is_error: bool = False
     error_message: str = ""
     has_result_event: bool = False
+    thinking_text: str = ""
 
 
 class StreamParser:
@@ -96,6 +97,9 @@ class StreamParser:
 
         if event_type == "result":
             return self._handle_result(data)
+
+        if event_type == "content_block_delta":
+            return self._handle_content_block_delta(data)
 
         return None
 
@@ -196,6 +200,14 @@ class StreamParser:
 
         return self._set_phase(Phase.COMPLETED)
 
+    def _handle_content_block_delta(self, data: dict) -> Optional[Phase]:
+        delta = data.get("delta", {})
+        if delta.get("type") == "thinking_delta":
+            text = delta.get("thinking", "")
+            if text:
+                self._state.thinking_text += text
+        return None
+
     def _set_phase(self, new_phase: Phase) -> Phase:
         """Update internal phase and return the new phase."""
         self._state.phase = new_phase
@@ -209,7 +221,7 @@ class StreamParser:
         """Return the final result as a dict.
 
         Keys: session_id, response_text, input_tokens, output_tokens,
-              is_error, error_message.
+              is_error, error_message, thinking_text.
         """
         return {
             "session_id": self._state.session_id,
@@ -218,4 +230,5 @@ class StreamParser:
             "output_tokens": self._state.output_tokens,
             "is_error": self._state.is_error,
             "error_message": self._state.error_message,
+            "thinking_text": self._state.thinking_text,
         }

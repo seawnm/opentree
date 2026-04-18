@@ -400,8 +400,10 @@ class Dispatcher:
                 break
 
             # Step 10: finalize tool tracker and record circuit breaker result.
-            tracker.finish()
             assert result is not None  # loop always executes at least once
+            if result.thinking_text:
+                tracker.add_thinking_text(result.thinking_text)
+            tracker.finish()
             if result.is_error or result.is_timeout:
                 self._circuit_breaker.record_failure()
             else:
