@@ -313,6 +313,70 @@ class TestToolTrackerBuildTimeline:
 
 
 # ---------------------------------------------------------------------------
+# ToolTracker — get_work_phase()
+# ---------------------------------------------------------------------------
+
+
+class TestGetWorkPhase:
+    """Tests for get_work_phase() dominant recent-tool behavior."""
+
+    def test_web_majority_over_single_bash(self):
+        """Recent window dominated by web tools returns web phase."""
+        tracker = ToolTracker()
+        tracker._tools = [
+            ToolUse(name="WebSearch1", started_at=100.0, ended_at=101.0, category="web"),
+            ToolUse(name="WebSearch2", started_at=101.0, ended_at=102.0, category="web"),
+            ToolUse(name="WebSearch3", started_at=102.0, ended_at=103.0, category="web"),
+            ToolUse(name="Bash", started_at=103.0, ended_at=104.0, category="bash"),
+        ]
+
+        assert tracker.get_work_phase() == "🌐 搜尋網路中"
+
+    def test_bash_majority_over_web(self):
+        """Recent window dominated by bash tools returns bash phase."""
+        tracker = ToolTracker()
+        tracker._tools = [
+            ToolUse(name="WebSearch1", started_at=100.0, ended_at=101.0, category="web"),
+            ToolUse(name="WebSearch2", started_at=101.0, ended_at=102.0, category="web"),
+            ToolUse(name="Bash1", started_at=102.0, ended_at=103.0, category="bash"),
+            ToolUse(name="Bash2", started_at=103.0, ended_at=104.0, category="bash"),
+            ToolUse(name="Bash3", started_at=104.0, ended_at=105.0, category="bash"),
+        ]
+
+        assert tracker.get_work_phase() == "💻 執行指令中"
+
+    def test_all_same_category(self):
+        """Uniform recent window returns that category label."""
+        tracker = ToolTracker()
+        tracker._tools = [
+            ToolUse(name="MCP1", started_at=100.0, ended_at=101.0, category="mcp"),
+            ToolUse(name="MCP2", started_at=101.0, ended_at=102.0, category="mcp"),
+            ToolUse(name="MCP3", started_at=102.0, ended_at=103.0, category="mcp"),
+            ToolUse(name="MCP4", started_at=103.0, ended_at=104.0, category="mcp"),
+        ]
+
+        assert tracker.get_work_phase() == "🧩 調用工具中"
+
+    def test_generating_flag_overrides_tools(self):
+        """Generating state always overrides the tool-derived phase."""
+        tracker = ToolTracker()
+        tracker._tools = [
+            ToolUse(name="WebSearch1", started_at=100.0, ended_at=101.0, category="web"),
+            ToolUse(name="Bash1", started_at=101.0, ended_at=102.0, category="bash"),
+        ]
+        tracker._generating = True
+
+        assert tracker.get_work_phase() == "📝 生成回覆中"
+
+    def test_empty_tools_thinking_active(self):
+        """Empty recent window while thinking returns thinking phase."""
+        tracker = ToolTracker()
+        tracker._thinking_started_at = time.time()
+
+        assert tracker.get_work_phase() == "🧠 思考中"
+
+
+# ---------------------------------------------------------------------------
 # ToolTracker — get_summary()
 # ---------------------------------------------------------------------------
 

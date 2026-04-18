@@ -302,15 +302,28 @@ class ToolTracker:
 
     def get_work_phase(self) -> str:
         """Return a coarse work-phase label for the live Slack panel."""
-        if self._current is not None:
-            return _WORK_PHASE_LABEL.get(self._current.category, "🔧 處理中")
         if self._generating:
             return "📝 生成回覆中"
-        if self._thinking_started_at > 0:
+
+        recent_tools = self._tools[-4:]
+        if self._current is not None:
+            recent_tools = recent_tools + [self._current]
+
+        if not recent_tools:
             return "🧠 思考中"
-        if self._tools:
-            return _WORK_PHASE_LABEL.get(self._tools[-1].category, "🔧 處理中")
-        return "🧠 思考中"
+
+        category_counts: dict[str, int] = {}
+        for tool in recent_tools:
+            category_counts[tool.category] = category_counts.get(tool.category, 0) + 1
+
+        max_count = max(category_counts.values())
+        dominant_category = "other"
+        for tool in reversed(recent_tools):
+            if category_counts[tool.category] == max_count:
+                dominant_category = tool.category
+                break
+
+        return _WORK_PHASE_LABEL.get(dominant_category, "🔧 處理中")
 
     def get_summary(self) -> dict:
         """Return summary dict for status/logging."""
