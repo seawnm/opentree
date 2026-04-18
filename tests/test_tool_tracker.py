@@ -705,3 +705,88 @@ class TestBuildCompletionSummaryTasks:
         assert len(task_lines) == 1
         assert "子任務" in task_lines[0]
         assert "✅" in task_lines[0]
+
+
+# ---------------------------------------------------------------------------
+# ToolTracker — _format_tool_entry in-progress duration display
+# ---------------------------------------------------------------------------
+
+
+class TestFormatToolEntryInProgressDuration:
+    """Tests for in-progress duration display in _format_tool_entry."""
+
+    def test_inprogress_tool_shows_executing_suffix_in_timeline(self):
+        """In-progress tool (ended_at=0) shows '執行中 Xs' suffix in timeline entry."""
+        tracker = ToolTracker()
+        # Add an in-progress tool as _current (ended_at == 0)
+        tracker._current = ToolUse(
+            name="Bash",
+            started_at=1000.0,
+            ended_at=0.0,
+            input_preview="ls -la",
+            category="bash",
+        )
+        with patch("opentree.runner.tool_tracker.time") as mock_time:
+            mock_time.time.return_value = 1007.0  # 7 seconds elapsed
+            entries = tracker.build_progress_timeline()
+        bash_entries = [e for e in entries if e.icon == "💻"]
+        assert len(bash_entries) == 1
+        assert "執行中" in bash_entries[0].text
+        assert "7s" in bash_entries[0].text
+
+    def test_completed_tool_shows_float_duration_suffix_in_timeline(self):
+        """Completed tool (ended_at > 0) shows float 'X.Xs' suffix in timeline entry."""
+        tracker = ToolTracker()
+        tracker._tools = [
+            ToolUse(
+                name="WebSearch",
+                started_at=1000.0,
+                ended_at=1004.2,
+                input_preview="python docs",
+                category="web",
+            )
+        ]
+        entries = tracker.build_progress_timeline()
+        web_entries = [e for e in entries if e.icon == "🌐"]
+        assert len(web_entries) == 1
+        assert "4.2s" in web_entries[0].text
+        assert "執行中" not in web_entries[0].text
+
+    def test_inprogress_bash_shows_command_preview_and_executing_suffix(self):
+        """In-progress bash tool shows command preview and '(執行中 Xs)' suffix."""
+        tracker = ToolTracker()
+        tracker._current = ToolUse(
+            name="Bash",
+            started_at=500.0,
+            ended_at=0.0,
+            input_preview="npm test",
+            category="bash",
+        )
+        with patch("opentree.runner.tool_tracker.time") as mock_time:
+            mock_time.time.return_value = 503.0  # 3 seconds elapsed
+            entries = tracker.build_progress_timeline()
+        bash_entries = [e for e in entries if e.icon == "💻"]
+        assert len(bash_entries) == 1
+        text = bash_entries[0].text
+        assert "npm test" in text
+        assert "執行中 3s" in text
+
+    def test_inprogress_web_shows_search_label_and_executing_suffix(self):
+        """In-progress web tool shows '搜尋：query (執行中 Xs)' format."""
+        tracker = ToolTracker()
+        tracker._current = ToolUse(
+            name="WebSearch",
+            started_at=200.0,
+            ended_at=0.0,
+            input_preview="Taiwan semiconductor",
+            category="web",
+        )
+        with patch("opentree.runner.tool_tracker.time") as mock_time:
+            mock_time.time.return_value = 212.0  # 12 seconds elapsed
+            entries = tracker.build_progress_timeline()
+        web_entries = [e for e in entries if e.icon == "🌐"]
+        assert len(web_entries) == 1
+        text = web_entries[0].text
+        assert "搜尋：" in text
+        assert "Taiwan semiconductor" in text
+        assert "執行中 12s" in text

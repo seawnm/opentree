@@ -385,7 +385,7 @@ class ToolTracker:
         """Format a merged group of same-category tools into a single label."""
         if len(group) == 1:
             tool = group[0]
-            return self._format_tool_entry(tool, include_duration=tool.ended_at > 0)
+            return self._format_tool_entry(tool)
 
         count = len(group)
         category = group[0].category
@@ -411,9 +411,13 @@ class ToolTracker:
 
         return f"操作 {count} 次"
 
-    def _format_tool_entry(self, tool: ToolUse, include_duration: bool) -> str:
+    def _format_tool_entry(self, tool: ToolUse) -> str:
         preview = (tool.input_preview or "").strip().replace("\n", " ")
-        dur = f" ({tool.duration:.1f}s)" if include_duration else ""
+        if tool.ended_at > 0:
+            dur = f" ({tool.duration:.1f}s)"
+        else:
+            elapsed = int(tool.duration)
+            dur = f" (執行中 {elapsed}s)"
 
         if tool.category == "web":
             if preview:
