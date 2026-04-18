@@ -249,15 +249,30 @@ class ToolTracker:
                     unique.append(p)
             return unique[:max_n]
 
-        if category_counts.get("task"):
-            count = category_counts["task"]
-            previews = _pick_previews("task", 1)
-            if previews:
-                desc = previews[0][:45] + "..." if len(previews[0]) > 45 else previews[0]
-                suffix = f" 等 {count} 個" if count > 1 else ""
-                items.append(f"📋 子任務 `{desc}`{suffix}")
+        # --- expanded task subtask lines ---
+        task_tools: list[ToolUse] = [t for t in self._tools if t.category == "task"]
+        if self._current is not None and self._current.category == "task":
+            task_tools = task_tools + [self._current]
+
+        if task_tools:
+            # Parent header line
+            if len(task_tools) == 1 and task_tools[0].input_preview:
+                raw = task_tools[0].input_preview.strip().replace("\n", " ")
+                parent_desc = raw[:50] + "..." if len(raw) > 50 else raw
+                items.append(f"🌟 {parent_desc}")
             else:
-                items.append(f"📋 子任務 {count} 次")
+                items.append("🌟 子任務執行")
+            # One indented line per task tool
+            for t in task_tools:
+                raw_preview = (t.input_preview or "").strip().replace("\n", " ")
+                desc = raw_preview[:50] + "..." if len(raw_preview) > 50 else raw_preview
+                if not desc:
+                    desc = "子任務"
+                dur_str = ToolTracker._format_duration(t.duration)
+                if t.ended_at > 0:
+                    items.append(f"  📋 {desc} ✅ {dur_str}")
+                else:
+                    items.append(f"  📋 {desc} (執行中 {dur_str})")
 
         if category_counts.get("bash"):
             count = category_counts["bash"]
@@ -355,6 +370,16 @@ class ToolTracker:
             else:
                 groups.append([tool])
         return groups
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        """Format seconds into human-readable duration string."""
+        if seconds >= 60:
+            m = int(seconds // 60)
+            s = int(seconds % 60)
+            return f"{m}m{s}s"
+        else:
+            return f"{int(seconds)}s"
 
     def _format_group(self, group: list[ToolUse]) -> str:
         """Format a merged group of same-category tools into a single label."""

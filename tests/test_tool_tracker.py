@@ -638,3 +638,70 @@ class TestBuildProgressTimelineFolding:
         entries = tracker.build_progress_timeline(max_entries=6)
         skip_entries = [e for e in entries if "略過" in e.text]
         assert skip_entries[0].icon == "…"
+
+
+class TestBuildCompletionSummaryTasks:
+    """Tests for expanded task subtask lines in build_completion_summary()."""
+
+    def test_single_completed_task_shows_star_line_and_checkmark(self):
+        """Single completed task: parent 🌟 with task desc + indented 📋 ✅ Xs."""
+        tracker = ToolTracker()
+        tracker._tools = [
+            ToolUse(
+                name="subagent",
+                started_at=100.0,
+                ended_at=118.0,
+                input_preview="analyze the data",
+                category="task",
+            )
+        ]
+        items = tracker.build_completion_summary()
+        # Parent line uses the task description since there is exactly 1 task
+        assert any("🌟" in item and "analyze the data" in item for item in items)
+        # Indented line with checkmark and duration
+        assert any(item.startswith("  📋") and "✅" in item and "18s" in item for item in items)
+
+    def test_multiple_completed_tasks_shows_generic_parent(self):
+        """Multiple completed tasks: 🌟 子任務執行 parent + multiple 📋 lines."""
+        tracker = ToolTracker()
+        tracker._tools = [
+            ToolUse(name="subagent", started_at=100.0, ended_at=372.0, input_preview="subtask one", category="task"),
+            ToolUse(name="subagent", started_at=380.0, ended_at=398.0, input_preview="subtask two", category="task"),
+        ]
+        items = tracker.build_completion_summary()
+        # Parent header is generic when > 1 task
+        assert any(item == "🌟 子任務執行" for item in items)
+        # Both tasks appear as indented lines
+        task_lines = [item for item in items if item.startswith("  📋")]
+        assert len(task_lines) == 2
+        assert any("subtask one" in line and "✅" in line for line in task_lines)
+        assert any("subtask two" in line and "✅" in line for line in task_lines)
+
+    def test_inprogress_task_shows_running_suffix(self):
+        """In-progress task (ended_at=0) shows (執行中 Xs) suffix."""
+        tracker = ToolTracker()
+        # Put an in-progress task as _current
+        tracker._current = ToolUse(
+            name="subagent",
+            started_at=time.time() - 12,
+            ended_at=0.0,
+            input_preview="running task",
+            category="task",
+        )
+        items = tracker.build_completion_summary()
+        task_lines = [item for item in items if item.startswith("  📋")]
+        assert len(task_lines) == 1
+        assert "執行中" in task_lines[0]
+        assert "running task" in task_lines[0]
+
+    def test_task_with_no_preview_uses_fallback_description(self):
+        """Task with empty input_preview uses '子任務' as description."""
+        tracker = ToolTracker()
+        tracker._tools = [
+            ToolUse(name="subagent", started_at=100.0, ended_at=105.0, input_preview="", category="task"),
+        ]
+        items = tracker.build_completion_summary()
+        task_lines = [item for item in items if item.startswith("  📋")]
+        assert len(task_lines) == 1
+        assert "子任務" in task_lines[0]
+        assert "✅" in task_lines[0]
