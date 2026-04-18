@@ -137,10 +137,11 @@ def _is_interactive() -> bool:
     return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
 
-_VALID_CMD_MODES = {"auto", "bare", "uv-run"}
+_VALID_CMD_MODES = {"auto", "bare", "uv-run", "venv"}
 
-
-def _resolve_opentree_cmd(cmd_mode: str = "auto") -> tuple[str, Path | None]:
+def _resolve_opentree_cmd(
+    cmd_mode: str = "auto", home: Path | None = None
+) -> tuple[str, Path | None]:
     """Determine how to invoke opentree in run.sh.
 
     Detection priority (``auto`` mode):
@@ -152,6 +153,7 @@ def _resolve_opentree_cmd(cmd_mode: str = "auto") -> tuple[str, Path | None]:
     Explicit modes:
       - ``bare``: always use bare ``opentree`` (assumes installed)
       - ``uv-run``: always use ``uv run --directory`` (source checkout)
+      - ``venv``: use ``<home>/.venv/bin/opentree`` (instance-local virtualenv)
 
     Returns:
         ``(command_string, project_root_or_None)``
@@ -160,6 +162,17 @@ def _resolve_opentree_cmd(cmd_mode: str = "auto") -> tuple[str, Path | None]:
         raise typer.BadParameter(
             f"Invalid --cmd-mode '{cmd_mode}'. "
             f"Choose from: {', '.join(sorted(_VALID_CMD_MODES))}"
+        )
+
+    if cmd_mode == "venv":
+        if home is None:
+            raise typer.BadParameter("--cmd-mode venv requires --home")
+        venv_opentree = home / ".venv" / "bin" / "opentree"
+        if venv_opentree.is_file():
+            return str(venv_opentree), None
+        raise typer.BadParameter(
+            f"--cmd-mode venv requires an existing virtualenv at {venv_opentree}. "
+            "Create the venv first."
         )
 
     if cmd_mode == "bare":
@@ -437,7 +450,8 @@ def init_command(
                 "How to invoke opentree in run.sh. "
                 "'auto' (default): source checkout → uv run, installed → bare. "
                 "'bare': always use bare 'opentree' (requires pip install). "
-                "'uv-run': always use 'uv run --directory' (source checkout)."
+                "'uv-run': always use 'uv run --directory' (source checkout). "
+                "'venv': use '<home>/.venv/bin/opentree' (requires --home and an existing venv)."
             ),
         ),
     ] = "auto",
@@ -684,7 +698,9 @@ def init_command(
     if run_sh_template.is_file():
         content = run_sh_template.read_text(encoding="utf-8")
         content = content.replace("{{opentree_home}}", str(opentree_home))
-        opentree_cmd, project_root = _resolve_opentree_cmd(cmd_mode)
+        opentree_cmd, project_root = _resolve_opentree_cmd(
+            cmd_mode, home=opentree_home
+        )
         content = content.replace("{{opentree_cmd}}", opentree_cmd)
         run_sh_path = bin_dir / "run.sh"
 
