@@ -51,8 +51,9 @@ class TestCommandExecution:
             )
         )
         assert phase == Phase.TOOL_USE
-        assert parser.state.tool_name == "pytest tests/"
+        assert parser.state.tool_name == "Bash"
         assert parser.state.tool_input_preview == "pytest tests/"
+        assert parser.state.tool_category == "bash"
 
     def test_item_completed_command_execution_returns_to_thinking(self) -> None:
         parser = StreamParser()

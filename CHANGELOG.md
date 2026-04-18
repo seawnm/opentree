@@ -5,6 +5,8 @@
 ## [Unreleased]
 
 ### Added
+- **`danger-full-access` sandbox mode** — 接線 `RunnerConfig.codex_sandbox` 欄位（原已定義但從未消費）。設定 `codex_sandbox: "danger-full-access"` 後：bot 啟動跳過 bwrap 檢查；Codex CLI 以 `--dangerously-bypass-approvals-and-sandbox` 直接在宿主機執行，可存取所有路徑。guardrail deny 規則（`settings.json`）仍有效。預設 `"workspace-write"` 行為完全不變。三個接線點：`dispatcher.py`（×2）+ `bot.py`（×1）。設計決策：[openspec/changes/20260418-danger-full-access/](openspec/changes/20260418-danger-full-access/)
+- **`.env.local.example` 獨立模板檔** — 新增 `src/opentree/templates/.env.local.example`（4 節中英雙語註解）。`opentree init` 從模板檔讀取，fallback 至最小 inline stub。與 `run.sh.template` 一致的設計模式，易於維護與擴充。設計決策：[openspec/changes/20260418-danger-full-access/](openspec/changes/20260418-danger-full-access/)
 - **Codex CLI runtime** — `codex_process.py` replaces `claude_process.py` as the subprocess backend. `CodexProcess.run()` returns the same `ClaudeResult` dataclass, keeping the dispatcher interface identical. `codex_stream_parser.py` parses Codex `--json` JSONL events (`thread.started`, `item.started/completed`, `turn.completed`). Design: [openspec/changes/20260416-codex-migration/](openspec/changes/20260416-codex-migration/)
 - **AGENTS.md generator** — `generate_agents_md()` in `generator/claude_md.py` produces `workspace/AGENTS.md` (Codex system prompt carrier) using plain `# OPENTREE:AUTO:BEGIN/END` markers (not HTML comments). Owner content outside the markers is preserved across refresh. `_write_codex_config_trust()` in `cli/init.py` idempotently adds the workspace to `~/.codex/config.toml` as a trusted project.
 - **`opentree stop` CLI 指令** — 安全停止 wrapper + bot（SIGTERM → 等待 → SIGKILL），支援 `--force` 和 `--timeout`。防 PID reuse 誤殺（/proc/cmdline 驗證）。設計決策：[openspec/changes/20260408-reinstall-improvements/](openspec/changes/20260408-reinstall-improvements/)
@@ -31,6 +33,8 @@
 - Remove Bash `mkdir` dependency in memory-sop.md; Write tool handles directory creation natively
 - Add conditional phrasing to capability declarations in personality rules to prevent over-promising
 - Add graceful degradation guidance for tool unavailability scenarios
+- **LLM Owner 識別修復** — `character.md` 新增 4 條識別規則，防止 LLM 將一般使用者誤識為 Owner、以及幻覺 Owner user_id。根因：`character.md` 缺乏「唯一判斷依據是系統提示的『權限等級』欄位」的明確指引。設計決策：[openspec/changes/20260418-owner-identification-fix/](openspec/changes/20260418-owner-identification-fix/)
+- **AGENTS.md sync fix** — `module refresh/install/update/remove` now regenerates `workspace/AGENTS.md` in addition to `CLAUDE.md`. Previously, Codex CLI bots received stale instructions after any module change because `_regenerate_claude_md()` only updated `CLAUDE.md`. Design: [openspec/changes/20260418-agents-md-sync-fix/](openspec/changes/20260418-agents-md-sync-fix/)
 - **Permission Remediation（三層防線）** — v0.5.0 部署後所有功能靜默失敗的根因修復。設計決策：[openspec/changes/20260408-permission-remediation/](openspec/changes/20260408-permission-remediation/)
   - **settings.json 格式修正**：`SettingsGenerator` 輸出從不合法的 `{"allowedTools": [...]}` 改為 Claude Code 規範的 `{"permissions": {"allow": [...], "deny": [...]}}`
   - **Permission mode 支援**：`ClaudeProcess._build_claude_args()` 新增 `permission_mode` 參數（**已由 20260411 安全修復取代，見下方 Security 節**）

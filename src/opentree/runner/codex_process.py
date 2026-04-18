@@ -89,12 +89,15 @@ def _build_codex_args(
 
     When running without an outer sandbox (sandboxed=False) we keep
     ``--full-auto`` so Codex uses its workspace-write sandbox for basic
-    isolation.
+    isolation, unless ``config.codex_sandbox == "danger-full-access"`` in
+    which case we bypass all sandboxing for full filesystem access.
     """
     del system_prompt  # Written to AGENTS.md before the subprocess starts.
 
-    if sandboxed:
-        # Outer bwrap handles isolation; tell Codex to skip its own sandbox.
+    if sandboxed or config.codex_sandbox == "danger-full-access":
+        # Two cases share the same flags:
+        # 1. sandboxed=True: outer bwrap handles isolation; skip Codex's inner sandbox.
+        # 2. danger-full-access: intentionally no sandbox at all — full host access.
         exec_flag = "--dangerously-bypass-approvals-and-sandbox"
         extra_flags = ["--skip-git-repo-check"]
     else:
@@ -344,8 +347,12 @@ class CodexProcess:
 
         for raw_line in proc.stdout:
             self._last_output_time = time.monotonic()
-            new_phase = self._parser.parse_line(raw_line)
-            if new_phase is not None and self._progress_callback is not None:
+            prev_seq = self._parser.state.event_seq
+            self._parser.parse_line(raw_line)
+            if (
+                self._parser.state.event_seq != prev_seq
+                and self._progress_callback is not None
+            ):
                 try:
                     self._progress_callback(self._parser.state)
                 except Exception as exc:  # pragma: no cover

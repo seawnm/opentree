@@ -20,7 +20,7 @@ import typer
 from opentree.core.config import load_user_config
 from opentree.core.placeholders import PlaceholderEngine
 from opentree.core.version import compare_versions
-from opentree.generator.claude_md import ClaudeMdGenerator
+from opentree.generator.claude_md import ClaudeMdGenerator, generate_agents_md
 from opentree.generator.settings import SettingsGenerator
 from opentree.generator.symlinks import SymlinkManager
 from opentree.manifest.validator import ManifestValidator
@@ -98,7 +98,10 @@ def _find_reverse_deps(
 
 
 def _regenerate_claude_md(home: Path, registry_data) -> None:
-    """Regenerate workspace/CLAUDE.md from current registry, preserving owner content."""
+    """Regenerate workspace/CLAUDE.md and workspace/AGENTS.md.
+
+    Preserves owner content in both files when possible.
+    """
     config = load_user_config(home)
     gen = ClaudeMdGenerator()
     claude_md_path = home / "workspace" / "CLAUDE.md"
@@ -117,6 +120,22 @@ def _regenerate_claude_md(home: Path, registry_data) -> None:
 
     content = gen.generate_with_preservation(existing, home, registry_data, config)
     claude_md_path.write_text(content, encoding="utf-8")
+
+    agents_md_path = home / "workspace" / "AGENTS.md"
+
+    # Read existing content (if any) for preservation
+    existing_agents = None
+    if agents_md_path.exists():
+        try:
+            existing_agents = agents_md_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning(
+                "Cannot read existing AGENTS.md (%s), owner content will not be preserved",
+                exc,
+            )
+
+    agents_content = generate_agents_md(home, registry_data, config, existing_agents)
+    agents_md_path.write_text(agents_content, encoding="utf-8")
 
 
 # ------------------------------------------------------------------

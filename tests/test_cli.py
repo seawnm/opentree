@@ -272,7 +272,7 @@ class TestInstall:
                 encoding="utf-8"
             )
         )
-        assert "Bash(alloy youtube:*)" in settings["allowedTools"]
+        assert "Bash(alloy youtube:*)" in settings["permissions"]["allow"]
 
 
 # ------------------------------------------------------------------

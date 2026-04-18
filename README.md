@@ -148,6 +148,13 @@ Owner-only commands sent via Slack `@BotName <command>`:
 | `reset-bot-all` | Hard reset -- clear all customizations and data, regenerate everything from scratch |
 | `shutdown` | Permanent stop (no auto-restart) |
 
+### Owner Identification
+
+Owner detection is based only on the `権限等級：Owner` signal in the system prompt.
+If the prompt shows `権限等級：一般使用者`, that user is not the Owner.
+When asked who the Owner is, the bot answers from this signal only and does not guess or hallucinate user IDs.
+The `admin_users` configuration is never exposed in the system prompt.
+
 ## Module System
 
 ### Pre-installed Modules

@@ -124,9 +124,13 @@ class Bot:
         logger.info("Bot authenticated as %s", bot_user_id)
 
         # Step 3: initialize Dispatcher
-        check_bwrap_or_raise()
+        # Skip bwrap check when danger-full-access is configured — this mode
+        # intentionally runs without any sandbox for full host filesystem access.
+        _runner_config_precheck = load_runner_config(self._home)
+        if _runner_config_precheck.codex_sandbox != "danger-full-access":
+            check_bwrap_or_raise()
         self._dispatcher = Dispatcher(self._home, self._slack_api, self._shutdown_event)
-        self._runner_config = load_runner_config(self._home)
+        self._runner_config = _runner_config_precheck
 
         # Step 4: register signal handlers
         self._setup_signal_handlers()

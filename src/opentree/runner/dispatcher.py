@@ -285,12 +285,30 @@ class Dispatcher:
 
         def _tracking_callback(state) -> None:
             """Progress callback that also feeds the tool tracker."""
-            if state.phase == Phase.TOOL_USE:
-                tracker.start_tool(state.tool_name, state.tool_input_preview)
-            elif tracker._current is not None:
-                # Phase left TOOL_USE — close the open tool.
+            if state.last_event == "thinking_started":
+                tracker.start_thinking()
+            elif state.last_event == "thinking_completed":
+                tracker.end_thinking()
+            elif state.last_event == "tool_started":
+                tracker.end_thinking()
+                tracker.start_tool(
+                    state.tool_name,
+                    state.tool_input_preview,
+                    category=getattr(state, "tool_category", "other"),
+                )
+            elif state.last_event == "tool_completed":
                 tracker.end_tool()
-            reporter.update(state)
+                tracker.start_thinking()
+            elif state.last_event == "response_started":
+                tracker.end_tool()
+                tracker.end_thinking()
+                tracker.start_generating()
+
+            reporter.update(
+                state,
+                timeline=tracker.build_progress_timeline(),
+                work_phase=tracker.get_work_phase(),
+            )
 
         try:
             # Step 1: send initial ack via ProgressReporter.
@@ -350,7 +368,7 @@ class Dispatcher:
                     session_id=session_id,
                     message=message,
                     progress_callback=_tracking_callback,
-                    sandboxed=True,
+                    sandboxed=(self._runner_config.codex_sandbox != "danger-full-access"),
                     is_owner=is_owner,
                 )
                 result = claude.run()
@@ -389,8 +407,7 @@ class Dispatcher:
             else:
                 self._circuit_breaker.record_success()
 
-            # Build tool timeline string for the completion message.
-            tool_timeline = tracker.build_timeline()
+            completion_items = tracker.build_completion_summary()
 
             # Step 11: send final result via ProgressReporter.
             try:
@@ -403,26 +420,16 @@ class Dispatcher:
                     elapsed=elapsed,
                     is_error=True,
                     error_message="Request timed out. Please try again.",
+                    completion_items=completion_items,
                 )
                 self._task_queue.mark_failed(task)
                 return
-
-            try:
-                input_tokens = int(result.input_tokens)
-            except (TypeError, ValueError):
-                input_tokens = 0
-            try:
-                output_tokens = int(result.output_tokens)
-            except (TypeError, ValueError):
-                output_tokens = 0
             reporter.complete(
                 response_text=result.response_text or "",
                 elapsed=elapsed,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
                 is_error=result.is_error,
                 error_message=result.error_message or "",
-                tool_timeline=tool_timeline,
+                completion_items=completion_items,
             )
 
             if result.is_error:
@@ -631,7 +638,7 @@ class Dispatcher:
             memory_path=memory_path,
             is_new_user=is_new,
             is_owner=is_owner,
-            is_sandboxed=True,
+            is_sandboxed=(self._runner_config.codex_sandbox != "danger-full-access"),
             thread_participants=tuple(participants),
             opentree_home=str(self._home),
         )

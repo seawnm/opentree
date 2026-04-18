@@ -762,18 +762,18 @@ def init_command(
     # Generate config/.env.local.example (owner customization template)
     env_local_example = opentree_home / "config" / ".env.local.example"
     if not env_local_example.exists() or force:
-        env_local_example.write_text(
-            "# Owner Customization\n"
-            "# Copy this file to .env.local and add your own keys.\n"
-            "# Keys here override values in .env.defaults.\n"
-            "#\n"
-            "# Example:\n"
-            "# OPENAI_API_KEY=sk-your-key-here\n"
-            "#\n"
-            "# To override Slack tokens:\n"
-            "# SLACK_BOT_TOKEN=xoxb-your-custom-token\n",
-            encoding="utf-8",
-        )
+        env_local_example_template = template_dir / ".env.local.example"
+        if env_local_example_template.is_file():
+            example_content = env_local_example_template.read_text(encoding="utf-8")
+        else:
+            example_content = (
+                "# Owner customization\n"
+                "SLACK_BOT_TOKEN=<your-xoxb-token>\n"
+                "SLACK_APP_TOKEN=<your-xapp-token>\n"
+                "ANTHROPIC_API_KEY=<your-anthropic-api-key>\n"
+                "OPENTREE_HOME=<path-to-this-instance>\n"
+            )
+        env_local_example.write_text(example_content, encoding="utf-8")
         typer.echo("  Created config/.env.local.example")
 
     # Clean up legacy .env.example on --force

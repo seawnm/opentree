@@ -35,6 +35,7 @@ class ProgressState:
     phase: Phase = Phase.INITIALIZING
     tool_name: str = ""
     tool_input_preview: str = ""
+    tool_category: str = "other"
     session_id: str = ""
     response_text: str = ""
     input_tokens: int = 0
@@ -43,6 +44,8 @@ class ProgressState:
     is_error: bool = False
     error_message: str = ""
     has_result_event: bool = False
+    last_event: str = ""
+    event_seq: int = 0
 
 
 class StreamParser:
@@ -116,6 +119,7 @@ class StreamParser:
         thread_id = data.get("thread_id")
         if isinstance(thread_id, str):
             self._state.session_id = thread_id
+        self._mark_event("thinking_started")
         return self._set_phase(Phase.THINKING)
 
     def _handle_item_started(self, data: dict[str, Any]) -> Optional[Phase]:
@@ -124,15 +128,23 @@ class StreamParser:
             return None
 
         item_type = item.get("type")
-        if item_type != "command_execution":
+        if item_type == "reasoning":
+            self._mark_event("thinking_started")
+            return self._set_phase(Phase.THINKING)
+
+        if item_type not in {
+            "command_execution",
+            "mcp_tool_call",
+            "web_search",
+            "collab_tool_call",
+        }:
             return None
 
-        command = item.get("command") or ""
-        if not isinstance(command, str):
-            command = str(command)
-
-        self._state.tool_name = command
-        self._state.tool_input_preview = command
+        tool_name, tool_preview, tool_category = self._extract_tool_details(item, item_type)
+        self._state.tool_name = tool_name
+        self._state.tool_input_preview = tool_preview
+        self._state.tool_category = tool_category
+        self._mark_event("tool_started")
         return self._set_phase(Phase.TOOL_USE)
 
     def _handle_item_completed(self, data: dict[str, Any]) -> Optional[Phase]:
@@ -142,8 +154,22 @@ class StreamParser:
 
         item_type = item.get("type")
 
+        if item_type == "reasoning":
+            self._mark_event("thinking_completed")
+            return self._set_phase(Phase.THINKING)
+
         if item_type == "command_execution":
             self._update_error_hint_from_command(item)
+            self._mark_event("tool_completed")
+            self._state.tool_category = "bash"
+            return self._set_phase(Phase.THINKING)
+
+        if item_type in {"mcp_tool_call", "web_search", "collab_tool_call"}:
+            tool_name, tool_preview, tool_category = self._extract_tool_details(item, item_type)
+            self._state.tool_name = tool_name
+            self._state.tool_input_preview = tool_preview
+            self._state.tool_category = tool_category
+            self._mark_event("tool_completed")
             return self._set_phase(Phase.THINKING)
 
         if item_type == "agent_message":
@@ -151,6 +177,7 @@ class StreamParser:
             if text:
                 self._saw_agent_message = True
                 self._state.response_text = text
+            self._mark_event("response_started")
             return self._set_phase(Phase.GENERATING)
 
         return None
@@ -170,9 +197,55 @@ class StreamParser:
             self._state.is_error = True
             if not self._state.error_message:
                 self._state.error_message = "Codex turn completed without an agent_message."
+            self._mark_event("turn_completed")
             return self._set_phase(Phase.ERROR)
 
+        self._mark_event("turn_completed")
         return self._set_phase(Phase.COMPLETED)
+
+    def _extract_tool_details(
+        self,
+        item: dict[str, Any],
+        item_type: str,
+    ) -> tuple[str, str, str]:
+        if item_type == "command_execution":
+            command = item.get("command") or ""
+            if not isinstance(command, str):
+                command = str(command)
+            return "Bash", command, "bash"
+
+        if item_type == "web_search":
+            query = item.get("query") or item.get("search_query") or ""
+            if not isinstance(query, str):
+                query = str(query)
+            return "WebSearch", query, "web"
+
+        if item_type == "collab_tool_call":
+            description = (
+                item.get("description")
+                or item.get("task")
+                or item.get("name")
+                or ""
+            )
+            if not isinstance(description, str):
+                description = str(description)
+            return "Task", description, "task"
+
+        server = item.get("server")
+        tool_name = item.get("name") or item.get("tool_name") or "MCP"
+        if not isinstance(tool_name, str):
+            tool_name = str(tool_name)
+        if isinstance(server, str) and server:
+            tool_name = f"{server}.{tool_name}"
+
+        arguments = item.get("arguments") or item.get("input") or ""
+        if isinstance(arguments, dict):
+            preview = json.dumps(arguments, ensure_ascii=False)
+        elif isinstance(arguments, str):
+            preview = arguments
+        else:
+            preview = str(arguments)
+        return tool_name, preview, "mcp"
 
     def _extract_agent_message_text(self, item: dict[str, Any]) -> str:
         text = item.get("text")
@@ -215,6 +288,10 @@ class StreamParser:
         error = data.get("error")
         if isinstance(error, str) and error:
             self._state.error_message = error
+
+    def _mark_event(self, event: str) -> None:
+        self._state.last_event = event
+        self._state.event_seq += 1
 
     def _set_phase(self, new_phase: Phase) -> Phase:
         """Update internal phase and return the new phase."""

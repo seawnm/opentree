@@ -1,9 +1,4 @@
-"""Progress reporting for OpenTree bot runner.
-
-Periodically updates a Slack message showing the current state of
-Claude CLI execution: phase (thinking/tool_use/generating), elapsed time,
-and a spinner animation.
-"""
+"""Slack progress reporting aligned with the legacy slack-bot UX."""
 from __future__ import annotations
 
 import logging
@@ -12,189 +7,141 @@ import time
 from typing import Optional
 
 from opentree.runner.stream_parser import Phase, ProgressState
+from opentree.runner.tool_tracker import TimelineEntry
 
 logger = logging.getLogger(__name__)
 
-# Phase display mapping
-_PHASE_EMOJI = {
-    Phase.INITIALIZING: ":hourglass_flowing_sand:",
-    Phase.THINKING: ":brain:",
-    Phase.TOOL_USE: ":hammer_and_wrench:",
-    Phase.GENERATING: ":writing_hand:",
-    Phase.COMPLETED: ":white_check_mark:",
-    Phase.ERROR: ":x:",
-}
-
 _PHASE_LABEL = {
-    Phase.INITIALIZING: "Initializing",
-    Phase.THINKING: "Thinking",
-    Phase.TOOL_USE: "Using tools",
-    Phase.GENERATING: "Writing response",
-    Phase.COMPLETED: "Done",
-    Phase.ERROR: "Error",
+    Phase.INITIALIZING: "初始化中",
+    Phase.THINKING: "思考中",
+    Phase.TOOL_USE: "處理中",
+    Phase.GENERATING: "生成回覆中",
+    Phase.COMPLETED: "處理完成",
+    Phase.ERROR: "處理失敗",
 }
 
-_SPINNER = ["◐", "◓", "◑", "◒"]
 
-
-def build_progress_blocks(state: ProgressState, elapsed: float) -> list[dict]:
-    """Build Block Kit blocks for progress display.
-
-    Returns a list of Block Kit block dicts:
-    - Header section: phase emoji + label + spinner
-    - Context: elapsed time, tool name if in tool_use phase
-    """
-    spinner = _SPINNER[int(elapsed) % len(_SPINNER)]
-    emoji = _PHASE_EMOJI.get(state.phase, ":gear:")
-    label = _PHASE_LABEL.get(state.phase, str(state.phase.value))
-
-    blocks = [
+def build_initial_ack_blocks() -> list[dict]:
+    """Build the initial acknowledgement blocks."""
+    return [
         {
-            "type": "section",
+            "type": "header",
             "text": {
-                "type": "mrkdwn",
-                "text": f"{emoji} *{label}* {spinner}",
+                "type": "plain_text",
+                "text": "⏳ 收到！正在處理...",
+                "emoji": True,
             },
         }
     ]
 
-    # Context elements
-    context_parts = [f":clock1: {int(elapsed)}s"]
-    if state.phase == Phase.TOOL_USE and state.tool_name:
-        context_parts.append(f":wrench: `{state.tool_name}`")
 
-    blocks.append(
+def build_progress_blocks(
+    state: ProgressState,
+    elapsed: float,
+    timeline: Optional[list[TimelineEntry]] = None,
+    work_phase: str = "",
+) -> list[dict]:
+    """Build Block Kit blocks for in-progress updates."""
+    label = _PHASE_LABEL.get(state.phase, "處理中")
+    context_text = f"已執行 {_format_duration(elapsed)}"
+    if work_phase:
+        context_text += f" · {work_phase}"
+    elif state.phase == Phase.TOOL_USE and state.tool_name:
+        context_text += f" · {state.tool_name}"
+
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"⏳ {label}",
+                "emoji": True,
+            },
+        },
         {
             "type": "context",
-            "elements": [{"type": "mrkdwn", "text": " | ".join(context_parts)}],
-        }
-    )
+            "elements": [{"type": "mrkdwn", "text": context_text}],
+        },
+    ]
+
+    if timeline:
+        blocks.append({"type": "divider"})
+        for entry in timeline:
+            blocks.append(
+                {
+                    "type": "context",
+                    "elements": [{"type": "mrkdwn", "text": f"{entry.icon} {entry.text}"}],
+                }
+            )
 
     return blocks
-
-
-# Slack Block Kit limits
-_SECTION_TEXT_LIMIT = 3000     # max chars per section text field
-_TOTAL_TEXT_LIMIT = 12000      # beyond this, add truncation indicator
 
 
 def build_completion_blocks(
-    response_text: str,
     elapsed: float,
-    input_tokens: int = 0,
-    output_tokens: int = 0,
     is_error: bool = False,
     error_message: str = "",
-    tool_timeline: str = "",
+    completion_items: Optional[list[str]] = None,
 ) -> list[dict]:
-    """Build Block Kit blocks for the final response.
-
-    - Success: response text + stats context.  Elapsed time is always shown;
-      token counts are appended when available (>0).  Long responses
-      (> 3000 chars) are split into multiple section blocks.  If the total
-      text exceeds 12 000 chars a "(truncated)" indicator is appended.
-    - Error: error message with :x: prefix (single section, truncated at 3000).
-    - Empty response: warning indicator.
-
-    Args:
-        response_text: The final response text from Claude.
-        elapsed: Elapsed wall-clock seconds (always shown on success).
-        input_tokens: Input token count (0 = not reported, omitted from display).
-        output_tokens: Output token count (0 = not reported, omitted from display).
-        is_error: Whether the result is an error.
-        error_message: Error description (used when is_error is True).
-        tool_timeline: Optional tool usage timeline string to display.
-    """
+    """Build Block Kit blocks for the final progress message."""
     if is_error:
-        text = f":x: *Error*\n{error_message or 'An error occurred.'}"
-        blocks: list[dict] = [
+        return [
             {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": text[:_SECTION_TEXT_LIMIT]},
-            }
-        ]
-    elif not response_text:
-        blocks = [
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": ":warning: _(no response)_"},
-            }
-        ]
-    else:
-        blocks = _split_text_into_sections(response_text)
-
-    # Tool timeline (only on success when tools were used)
-    if not is_error and tool_timeline:
-        blocks.append(
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": "❌ 處理失敗",
+                    "emoji": True,
+                },
+            },
             {
                 "type": "context",
-                "elements": [{"type": "mrkdwn", "text": tool_timeline}],
-            }
-        )
+                "elements": [{"type": "mrkdwn", "text": error_message or "發生未預期錯誤"}],
+            },
+        ]
 
-    # Stats context (always on success; tokens shown when available)
-    if not is_error:
-        stats = f":clock1: {elapsed:.1f}s"
-        if input_tokens:
-            stats += f" | :inbox_tray: {input_tokens:,}"
-        if output_tokens:
-            stats += f" | :outbox_tray: {output_tokens:,}"
-        blocks.append(
-            {
-                "type": "context",
-                "elements": [{"type": "mrkdwn", "text": stats}],
-            }
-        )
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "✅ 處理完成",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f"已執行 {_format_duration(elapsed)}"}],
+        },
+    ]
+
+    if completion_items:
+        blocks.append({"type": "divider"})
+        for item in completion_items:
+            blocks.append(
+                {
+                    "type": "context",
+                    "elements": [{"type": "mrkdwn", "text": item}],
+                }
+            )
 
     return blocks
 
 
-def _split_text_into_sections(text: str) -> list[dict]:
-    """Split long text into multiple section blocks.
-
-    Each section's text field is at most ``_SECTION_TEXT_LIMIT`` chars.
-    If the total text exceeds ``_TOTAL_TEXT_LIMIT``, a "(truncated)"
-    indicator is appended to the last section.
-    """
-    truncated = len(text) > _TOTAL_TEXT_LIMIT
-
-    chunks: list[str] = []
-    remaining = text
-    while remaining:
-        chunks.append(remaining[:_SECTION_TEXT_LIMIT])
-        remaining = remaining[_SECTION_TEXT_LIMIT:]
-
-    if truncated and chunks:
-        indicator = "\n\n_(truncated)_"
-        last = chunks[-1]
-        # Make room for indicator within the section limit
-        max_content = _SECTION_TEXT_LIMIT - len(indicator)
-        chunks[-1] = last[:max_content] + indicator
-
-    return [
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": chunk},
-        }
-        for chunk in chunks
-    ]
+def _format_duration(seconds: float) -> str:
+    total_seconds = max(0, int(seconds))
+    minutes, secs = divmod(total_seconds, 60)
+    if minutes > 0:
+        return f"{minutes} 分 {secs} 秒"
+    return f"{secs} 秒"
 
 
 class ProgressReporter:
-    """Background thread that periodically updates a Slack message.
-
-    Usage::
-
-        reporter = ProgressReporter(slack_api, channel, thread_ts, interval=10)
-        reporter.start()          # sends initial ack message
-        reporter.update(state)    # called on each phase change
-        reporter.complete(result) # sends final response, stops updates
-        reporter.stop()           # cleanup
-    """
+    """Background thread that updates one Slack progress message."""
 
     def __init__(
         self,
-        slack_api,  # SlackAPI instance (duck-typed to avoid import cycle)
+        slack_api,
         channel: str,
         thread_ts: str,
         interval: float = 10.0,
@@ -204,32 +151,28 @@ class ProgressReporter:
         self._thread_ts = thread_ts
         self._interval = interval
 
-        self._message_ts: str = ""       # ts of the progress message
+        self._message_ts: str = ""
         self._state = ProgressState()
+        self._timeline: list[TimelineEntry] = []
+        self._work_phase: str = ""
         self._start_time = time.time()
         self._stop_event = threading.Event()
         self._update_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
-        self._completed: bool = False    # safeguard: set after complete() sends final
-        self._tick_count: int = 0        # counter for progress update ticks
-
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
+        self._completed = False
+        self._tick_count = 0
 
     def start(self) -> str:
-        """Send initial ack message and start background update thread.
-
-        Returns the message_ts of the ack message.
-        """
+        """Send the initial acknowledgement message and start the loop."""
         self._start_time = time.time()
         self._stop_event.clear()
 
-        # Send the initial acknowledgement message
+        blocks = build_initial_ack_blocks()
         result = self._slack.send_message(
             channel=self._channel,
-            text=":hourglass_flowing_sand: Processing…",
+            text="⏳ 收到！正在處理...",
             thread_ts=self._thread_ts,
+            blocks=blocks,
         )
         self._message_ts = result.get("ts", "") if result else ""
         logger.info(
@@ -237,140 +180,112 @@ class ProgressReporter:
             self._channel, self._thread_ts, self._message_ts,
         )
 
-        # Start background update loop
         self._update_thread = threading.Thread(
             target=self._update_loop,
             daemon=True,
             name="progress-reporter",
         )
         self._update_thread.start()
-
         return self._message_ts
 
-    def update(self, state: ProgressState) -> None:
-        """Update the current state (called from ClaudeProcess progress_callback)."""
+    def update(
+        self,
+        state: ProgressState,
+        timeline: Optional[list[TimelineEntry]] = None,
+        work_phase: str = "",
+    ) -> None:
+        """Update the current live state used by the next Slack refresh."""
         with self._lock:
             self._state = state
+            self._timeline = list(timeline or [])
+            self._work_phase = work_phase
 
     def complete(
         self,
         response_text: str,
         elapsed: float,
-        input_tokens: int = 0,
-        output_tokens: int = 0,
         is_error: bool = False,
         error_message: str = "",
-        tool_timeline: str = "",
+        completion_items: Optional[list[str]] = None,
     ) -> None:
-        """Send final response and stop background updates."""
-        logger.info(
-            "[ProgressReporter.complete] STOPPING LOOP: channel=%s message_ts=%s is_error=%s ticks_so_far=%d",
-            self._channel, self._message_ts, is_error, self._tick_count,
-        )
-        # Stop loop first so it does not race against our final update
+        """Finalize the progress message and send the actual thread reply."""
         self._stop_event.set()
         if self._update_thread is not None:
             self._update_thread.join(timeout=2.0)
-
-        thread_alive = self._update_thread.is_alive() if self._update_thread else False
         self._completed = True
-        if thread_alive:
-            logger.warning(
-                "[ProgressReporter.complete] UPDATE THREAD STILL ALIVE after join(2s)! "
-                "Race condition possible. channel=%s message_ts=%s",
-                self._channel, self._message_ts,
-            )
-        logger.info(
-            "[ProgressReporter.complete] LOOP STOPPED: thread_still_alive=%s ticks_sent=%d channel=%s message_ts=%s",
-            thread_alive, self._tick_count, self._channel, self._message_ts,
-        )
 
         if not self._message_ts:
             return
 
-        blocks = build_completion_blocks(
-            response_text=response_text,
+        progress_blocks = build_completion_blocks(
             elapsed=elapsed,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
             is_error=is_error,
             error_message=error_message,
-            tool_timeline=tool_timeline,
+            completion_items=completion_items,
         )
-
-        # Build a short fallback text for notification previews
-        if is_error:
-            fallback = f":x: Error: {error_message or 'An error occurred.'}"
-        elif not response_text:
-            fallback = ":warning: (no response)"
-        else:
-            fallback = response_text[:200]
-
+        progress_fallback = (
+            f"❌ 處理失敗 | {error_message or '發生未預期錯誤'}"
+            if is_error
+            else f"✅ 處理完成 | 已執行 {_format_duration(elapsed)}"
+        )
         self._slack.update_message(
             channel=self._channel,
             ts=self._message_ts,
-            text=fallback,
-            blocks=blocks,
+            text=progress_fallback,
+            blocks=progress_blocks,
         )
-        logger.info(
-            "[ProgressReporter.complete] FINAL UPDATE SENT: channel=%s message_ts=%s fallback=%.60s blocks=%d",
-            self._channel, self._message_ts, fallback, len(blocks),
+
+        if is_error:
+            self._slack.send_message(
+                channel=self._channel,
+                text=f"❌ 處理失敗：{error_message or '發生未預期錯誤'}",
+                thread_ts=self._thread_ts,
+            )
+            return
+
+        if not response_text.strip():
+            return
+
+        reply_text = f"{response_text}\n\n_✅ 完成 (耗時 {_format_duration(elapsed)})_"
+        self._slack.send_message(
+            channel=self._channel,
+            text=reply_text,
+            thread_ts=self._thread_ts,
         )
 
     def stop(self) -> None:
         """Stop the background update thread."""
-        thread_alive = self._update_thread.is_alive() if self._update_thread else False
-        logger.info(
-            "[ProgressReporter.stop] channel=%s message_ts=%s thread_was_alive=%s completed=%s ticks=%d",
-            self._channel, self._message_ts, thread_alive, self._completed, self._tick_count,
-        )
         self._stop_event.set()
         if self._update_thread is not None:
             self._update_thread.join(timeout=2.0)
 
     @property
     def message_ts(self) -> str:
-        """The ts of the progress/response message."""
+        """The ts of the progress message."""
         return self._message_ts
 
-    # ------------------------------------------------------------------
-    # Background loop
-    # ------------------------------------------------------------------
-
     def _update_loop(self) -> None:
-        """Background loop: update Slack message every `interval` seconds."""
         while not self._stop_event.wait(self._interval):
-            # stop_event.wait() returns True when set, False on timeout
             self._push_progress()
 
     def _push_progress(self) -> None:
-        """Build current progress blocks and push to Slack."""
-        if not self._message_ts:
-            return
-
-        # Safeguard: skip if complete() already sent the final response.
-        if self._completed:
-            logger.warning(
-                "[ProgressReporter._push_progress] LATE UPDATE BLOCKED after complete()! "
-                "channel=%s message_ts=%s tick=%d",
-                self._channel, self._message_ts, self._tick_count,
-            )
+        if not self._message_ts or self._completed:
             return
 
         elapsed = time.time() - self._start_time
-
         with self._lock:
             state = self._state
+            timeline = list(self._timeline)
+            work_phase = self._work_phase
 
         self._tick_count += 1
-        blocks = build_progress_blocks(state, elapsed=elapsed)
-        fallback = f":clock1: {int(elapsed)}s"
-
-        logger.info(
-            "[ProgressReporter._push_progress] tick=%d phase=%s elapsed=%.1fs channel=%s message_ts=%s",
-            self._tick_count, state.phase.value, elapsed, self._channel, self._message_ts,
+        blocks = build_progress_blocks(
+            state=state,
+            elapsed=elapsed,
+            timeline=timeline,
+            work_phase=work_phase,
         )
-
+        fallback = f"⏳ {work_phase or _PHASE_LABEL.get(state.phase, '處理中')} | 已執行 {_format_duration(elapsed)}"
         try:
             self._slack.update_message(
                 channel=self._channel,
@@ -378,5 +293,5 @@ class ProgressReporter:
                 text=fallback,
                 blocks=blocks,
             )
-        except Exception as exc:
+        except Exception as exc:  # pragma: no cover
             logger.warning("Progress update failed: %s", exc)

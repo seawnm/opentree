@@ -116,6 +116,7 @@ class SlackAPI:
         channel: str,
         text: str,
         thread_ts: str = "",
+        blocks: Optional[list] = None,
     ) -> dict:
         """Post a message to a channel or thread.
 
@@ -131,6 +132,8 @@ class SlackAPI:
             kwargs: dict = {"channel": channel, "text": text}
             if thread_ts:
                 kwargs["thread_ts"] = thread_ts
+            if blocks is not None:
+                kwargs["blocks"] = blocks
             result = self._client.chat_postMessage(**kwargs)
             data = _extract_data(result)
             new_ts = data.get("ts", "")
