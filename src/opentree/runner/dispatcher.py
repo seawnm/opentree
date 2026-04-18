@@ -303,11 +303,14 @@ class Dispatcher:
                 tracker.end_tool()
                 tracker.end_thinking()
                 tracker.start_generating()
+                if state.response_text:
+                    tracker.track_text(state.response_text)
 
             reporter.update(
                 state,
                 timeline=tracker.build_progress_timeline(),
                 work_phase=tracker.get_work_phase(),
+                decision=tracker.get_latest_decision(),
             )
 
         try:

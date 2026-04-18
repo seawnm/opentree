@@ -872,3 +872,49 @@ class TestThinkingExcerpt:
         items = tracker.build_completion_summary()
         excerpt_lines = [i for i in items if i.startswith("  💭")]
         assert excerpt_lines == []
+
+
+# ---------------------------------------------------------------------------
+# ToolTracker — track_text() and get_latest_decision()
+# ---------------------------------------------------------------------------
+
+
+class TestDecisionPointDetection:
+    """Tests for track_text() and get_latest_decision()."""
+
+    def test_matching_text_creates_decision_point(self):
+        """track_text with a matching pattern returns a DecisionPoint."""
+        tracker = ToolTracker()
+        tracker.track_text("根據我的分析發現問題在這裡")
+        result = tracker.get_latest_decision()
+        assert result is not None
+        assert result.decision_type == "analysis"
+        assert "分析" in result.text or "發現" in result.text
+
+    def test_non_matching_text_returns_none(self):
+        """track_text with no matching pattern leaves decision as None."""
+        tracker = ToolTracker()
+        tracker.track_text("這是普通的回覆文字")
+        assert tracker.get_latest_decision() is None
+
+    def test_multiple_calls_returns_latest(self):
+        """Multiple track_text calls return the most recent decision."""
+        tracker = ToolTracker()
+        tracker.track_text("根據我的分析發現第一個問題")
+        tracker.track_text("開始規劃實作方案")
+        result = tracker.get_latest_decision()
+        assert result is not None
+        assert result.decision_type == "planning"
+
+    def test_decision_points_survive_finish(self):
+        """Decision points are still available after finish() is called."""
+        tracker = ToolTracker()
+        tracker.track_text("根據我的分析發現問題所在")
+        tracker.finish()
+        result = tracker.get_latest_decision()
+        assert result is not None
+
+    def test_empty_decision_points_returns_none(self):
+        """get_latest_decision returns None when no track_text was called."""
+        tracker = ToolTracker()
+        assert tracker.get_latest_decision() is None

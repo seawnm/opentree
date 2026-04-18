@@ -7,7 +7,7 @@ import time
 from typing import Optional
 
 from opentree.runner.stream_parser import Phase, ProgressState
-from opentree.runner.tool_tracker import TimelineEntry
+from opentree.runner.tool_tracker import DecisionPoint, TimelineEntry
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ def build_progress_blocks(
     elapsed: float,
     timeline: Optional[list[TimelineEntry]] = None,
     work_phase: str = "",
+    decision: Optional["DecisionPoint"] = None,
 ) -> list[dict]:
     """Build Block Kit blocks for in-progress updates."""
     label = _PHASE_LABEL.get(state.phase, "處理中")
@@ -73,6 +74,15 @@ def build_progress_blocks(
                     "elements": [{"type": "mrkdwn", "text": f"{entry.icon} {entry.text}"}],
                 }
             )
+
+    if decision:
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"💡 _{decision.text}_"
+            }
+        })
 
     return blocks
 
@@ -155,6 +165,7 @@ class ProgressReporter:
         self._state = ProgressState()
         self._timeline: list[TimelineEntry] = []
         self._work_phase: str = ""
+        self._decision: Optional[DecisionPoint] = None
         self._start_time = time.time()
         self._stop_event = threading.Event()
         self._update_thread: Optional[threading.Thread] = None
@@ -193,12 +204,14 @@ class ProgressReporter:
         state: ProgressState,
         timeline: Optional[list[TimelineEntry]] = None,
         work_phase: str = "",
+        decision: Optional[DecisionPoint] = None,
     ) -> None:
         """Update the current live state used by the next Slack refresh."""
         with self._lock:
             self._state = state
             self._timeline = list(timeline or [])
             self._work_phase = work_phase
+            self._decision = decision
 
     def complete(
         self,
@@ -277,6 +290,7 @@ class ProgressReporter:
             state = self._state
             timeline = list(self._timeline)
             work_phase = self._work_phase
+            decision = self._decision
 
         self._tick_count += 1
         blocks = build_progress_blocks(
@@ -284,6 +298,7 @@ class ProgressReporter:
             elapsed=elapsed,
             timeline=timeline,
             work_phase=work_phase,
+            decision=decision,
         )
         fallback = f"⏳ {work_phase or _PHASE_LABEL.get(state.phase, '處理中')} | 已執行 {_format_duration(elapsed)}"
         try:

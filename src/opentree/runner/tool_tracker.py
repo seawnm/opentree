@@ -31,6 +31,12 @@ class TimelineEntry:
     icon: str
     text: str
 
+@dataclass
+class DecisionPoint:
+    """A detected decision/reasoning moment from assistant text."""
+    text: str
+    decision_type: str
+
 
 _CATEGORY_ICON = {
     "bash": "💻",
@@ -51,6 +57,14 @@ _WORK_PHASE_LABEL = {
 TIMELINE_HEAD_COUNT = 3
 TIMELINE_TAIL_COUNT = 3
 
+_DECISION_PATTERNS: list[tuple[str, str]] = [
+    (r"已經完成子任務\s*\d+", "subtask_complete"),
+    (r"執行失敗.*讓我思考", "retry"),
+    (r"資訊.*蒐集完成.*開始規劃", "info_collected"),
+    (r"開始.*方案|規劃.*實作", "planning"),
+    (r"讓我.*重新思考", "rethink"),
+    (r"根據.*分析.*發現", "analysis"),
+]
 
 class ToolTracker:
     """Tracks tool usage and coarse thinking activity for Slack summaries."""
@@ -64,6 +78,7 @@ class ToolTracker:
         self._thinking_entries: list[tuple[str, int]] = []
         self._thinking_excerpts: list[str] = []
         self._generating: bool = False
+        self._decision_points: list[DecisionPoint] = []
 
     def start_tool(
         self,
@@ -119,6 +134,25 @@ class ToolTracker:
     def start_generating(self) -> None:
         """Mark that the model is writing the final response."""
         self._generating = True
+
+    def track_text(self, text: str) -> None:
+        """Scan assistant text for decision points."""
+        import re
+        for pattern, decision_type in _DECISION_PATTERNS:
+            match = re.search(pattern, text)
+            if match:
+                start = max(0, match.start() - 20)
+                end = min(len(text), match.end() + 30)
+                decision_text = " ".join(text[start:end].split())
+                self._decision_points.append(DecisionPoint(
+                    text=decision_text,
+                    decision_type=decision_type,
+                ))
+                break  # one decision point per text segment
+
+    def get_latest_decision(self) -> Optional[DecisionPoint]:
+        """Return the most recent detected decision point, or None."""
+        return self._decision_points[-1] if self._decision_points else None
 
     def finish(self) -> None:
         """Close any open activity and finalize tracking."""

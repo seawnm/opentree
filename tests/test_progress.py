@@ -153,3 +153,28 @@ def test_reporter_update_loop_uses_latest_state() -> None:
         )
         for _, kwargs in slack.update_message.call_args_list
     )
+
+
+def test_build_progress_blocks_with_decision_shows_lightbulb_section() -> None:
+    """build_progress_blocks with a DecisionPoint adds a 💡 section block."""
+    from opentree.runner.tool_tracker import DecisionPoint
+    dp = DecisionPoint(text="根據分析發現需要修改三個檔案", decision_type="analysis")
+    blocks = build_progress_blocks(
+        ProgressState(phase=Phase.THINKING),
+        elapsed=5.0,
+        decision=dp,
+    )
+    section_blocks = [b for b in blocks if b["type"] == "section"]
+    assert len(section_blocks) == 1
+    assert "💡" in section_blocks[0]["text"]["text"]
+    assert "根據分析發現需要修改三個檔案" in section_blocks[0]["text"]["text"]
+
+
+def test_build_progress_blocks_without_decision_has_no_lightbulb() -> None:
+    """build_progress_blocks without a DecisionPoint has no 💡 section."""
+    blocks = build_progress_blocks(
+        ProgressState(phase=Phase.THINKING),
+        elapsed=5.0,
+    )
+    lightbulb_blocks = [b for b in blocks if b["type"] == "section" and "💡" in str(b)]
+    assert lightbulb_blocks == []
