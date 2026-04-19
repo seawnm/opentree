@@ -42,14 +42,13 @@ _BASH_DEPENDENT_MODULES: dict[str, str] = {
 
 
 def prompt_hook(context: dict[str, Any]) -> list[str]:
-    """Inject a capability summary based on runtime module + permission state.
+    """Inject capability summary and critical conversation rules into system prompt.
 
     Args:
         context: PromptContext.to_dict() output, includes opentree_home.
 
     Returns:
-        A list of prompt lines describing actually-available capabilities,
-        or an empty list on any error (fail-open: better to omit than crash).
+        A list of prompt lines, or an empty list on any error.
     """
     opentree_home = context.get("opentree_home", "")
     if not opentree_home:
@@ -60,7 +59,9 @@ def prompt_hook(context: dict[str, Any]) -> list[str]:
     try:
         installed = _load_installed_modules(home)
         allowed_tools = _load_allowed_tools(home)
-        return _build_capability_lines(installed, allowed_tools, home)
+        capability_lines = _build_capability_lines(installed, allowed_tools, home)
+        conversation_lines = _build_conversation_rules()
+        return capability_lines + ([""] if capability_lines and conversation_lines else []) + conversation_lines
     except Exception as exc:
         _log.warning("[personality] prompt_hook failed: %s", exc)
         return []
@@ -154,4 +155,32 @@ def _build_capability_lines(
         "## 目前可用功能",
         *available,
         "（以上功能目前可正常使用；若某項功能失敗，請主動告知使用者原因）",
+    ]
+
+
+def _build_conversation_rules() -> list[str]:
+    """Build critical conversation behavior rules for system prompt injection.
+
+    These rules are injected into the system prompt (higher priority than
+    static CLAUDE.md rules) to ensure consistent behavior.
+    """
+    return [
+        "## 🔴 對話強制規則（不可違反）",
+        "",
+        "**需求釐清：每次回覆最多只能問 1 個問題，絕對禁止在單一回覆中問多個問題。**",
+        "- 違反條件：回覆中出現 2 個以上問號（?？）即為違反",
+        "- 正確做法：先問最關鍵的一個問題，等使用者回答後再問下一個",
+        "- 使用 TEDW 順序：先問「你目前是怎麼做這件事的？」",
+        "",
+        "**輸出品質：回覆前必須確認數量達標、格式正確、檔案已上傳。**",
+        "- 若使用者要求「至少 N 則」，必須確保數量 ≥ N，不足則繼續蒐集",
+        "- 產生檔案後必須用 upload-tool 上傳到 Slack，不可只回覆本機路徑",
+        "- 產生 HTML/Markdown 文件時，必須清理所有 <URL|text> 格式為 [text](URL)",
+        "",
+        "**技術可行性：遇到不合理約束（如 5 秒完成耗時任務），必須先說明再協商，不可靜默 timeout。**",
+        "",
+        "**檔案交付：產生任何檔案後，必須呼叫 upload-tool 上傳到 Slack thread，不可只回覆本機路徑。**",
+        "- Owner/Admin：檔案存 <OPENTREE_HOME>/workspace/files/<thread_ts>/（持久化）",
+        "- 一般使用者：檔案存 /tmp/opentree/<thread_ts>/（暫存）",
+        "- 無論哪種使用者，產檔後都必須執行上傳",
     ]

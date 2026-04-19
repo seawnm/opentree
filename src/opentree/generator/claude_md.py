@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 _AUTO_BEGIN = "<!-- OPENTREE:AUTO:BEGIN -->"
 _AUTO_END = "<!-- OPENTREE:AUTO:END -->"
 _OWNER_HINT = "\n<!-- 以下為 Owner 自訂區塊，module 安裝/更新/refresh 不會覆蓋 -->\n"
-_AGENTS_AUTO_BEGIN = "# OPENTREE:AUTO:BEGIN"
-_AGENTS_AUTO_END = "# OPENTREE:AUTO:END"
-_AGENTS_OWNER_HINT = "# (auto-generated — edit below this line)\n"
+_AGENTS_AUTO_BEGIN = "<!-- OPENTREE:AUTO:BEGIN -->"
+_AGENTS_AUTO_END = "<!-- OPENTREE:AUTO:END -->"
+_AGENTS_OWNER_HINT = "\n<!-- 以下為 Owner 自訂區塊，module 安裝/更新/refresh 不會覆蓋 -->\n"
 
 
 @dataclass(frozen=True)

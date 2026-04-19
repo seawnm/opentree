@@ -7,3 +7,14 @@
   - 錯誤：`[文字](https://example.com)` — markdown 格式在 Slack 無效
   - 正確：`來源：媒體名稱` + 換行 + `https://example.com` — 純文字 URL，Slack 自動偵測
 - **超連結注意事項**：超連結後面不要直接接其他文字（不留空格），否則後續文字會被解析為連結的一部分
+
+## Slack URL 格式與檔案輸出
+
+Slack 內部有時傳入 `<URL|顯示文字>` 格式的連結。輸出時需依目標清理：
+
+- **Slack 回覆**：保留純文字 URL，Slack 自動偵測（`https://copy.ai`）
+- **HTML / Markdown 附件**：清理為 `[顯示文字](URL)`（`[Copy.ai](https://copy.ai)`）
+- **純文字說明**：移除 URL 語法，只保留顯示文字
+
+**產生 HTML / Markdown 附件前，必須掃描並清理所有 `<URL|text>` 格式。**
+禁止讓 `<http://Copy.ai|Copy.ai>` 這類原始 Slack URL 出現在附件中。

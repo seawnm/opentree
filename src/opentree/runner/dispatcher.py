@@ -116,6 +116,83 @@ class Dispatcher:
         # Working directory passed to Claude CLI via --cwd.
         self._workspace_dir = str(opentree_home / "workspace")
 
+        # Start queue watchdog: monitors pending tasks for stale waiting.
+        self._queue_watchdog_thread = threading.Thread(
+            target=self._queue_watchdog,
+            name="queue-watchdog",
+            daemon=True,
+        )
+        self._queue_watchdog_thread.start()
+
+    # ------------------------------------------------------------------
+    # Queue watchdog: cancel tasks that wait too long in the queue
+    # ------------------------------------------------------------------
+
+    def _queue_watchdog(self) -> None:
+        """Background thread: scan pending queue and expire stale tasks.
+
+        A task that has been waiting in the queue for longer than
+        ``task_timeout`` (default 1800s) is considered stale — the user
+        has likely moved on.  We cancel it and send a notification so
+        they know to retry later.
+
+        This prevents silent task loss when the bot restarts or when the
+        queue is saturated for an extended period.
+        """
+        poll_interval = 30.0  # seconds between scans
+        while not self._shutdown.is_set():
+            self._shutdown.wait(timeout=poll_interval)
+            if self._shutdown.is_set():
+                break
+            try:
+                self._expire_stale_pending_tasks()
+            except Exception as exc:
+                logger.warning("queue_watchdog error: %s", exc)
+
+    def _expire_stale_pending_tasks(self) -> None:
+        """Cancel pending tasks that have waited beyond task_timeout."""
+        now = time.time()
+        queue_timeout = getattr(self._runner_config, "task_timeout", 1800)
+
+        with self._task_queue._lock:  # noqa: SLF001  (necessary for atomic drain)
+            stale: list[Task] = [
+                t for t in self._task_queue._pending  # noqa: SLF001
+                if (now - t.created_at) >= queue_timeout
+            ]
+            for t in stale:
+                try:
+                    self._task_queue._pending.remove(t)  # noqa: SLF001
+                except ValueError:
+                    pass  # already removed by another path
+
+        for task in stale:
+            logger.warning(
+                "Queue watchdog: task %s expired after %.0fs waiting (thread_ts=%s)",
+                task.task_id,
+                now - task.created_at,
+                task.thread_ts,
+            )
+            try:
+                if task.queued_ack_ts:
+                    try:
+                        self._slack.delete_message(task.channel_id, task.queued_ack_ts)
+                    except Exception:
+                        pass  # best-effort
+                self._slack.send_message(
+                    task.channel_id,
+                    (
+                        "⚠️ 你的請求在佇列中等待太久（超過 30 分鐘），已自動取消。"
+                        " 系統現在比較忙，請稍後再重新發送。"
+                    ),
+                    thread_ts=task.thread_ts,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "queue_watchdog: failed to notify task %s: %s",
+                    task.task_id,
+                    exc,
+                )
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -376,8 +453,19 @@ class Dispatcher:
                 )
                 result = claude.run()
 
-                # Timeout is handled separately — never retried.
+                # Timeout: allow one automatic retry (heartbeat may have
+                # been triggered by a transient slow tool call, not a true
+                # infinite hang).  Second timeout → give up.
                 if result.is_timeout:
+                    if attempt == 0 and retry_config.max_attempts > 0:
+                        logger.warning(
+                            "Task %s timed out on attempt %d — retrying once (session cleared).",
+                            task.task_id,
+                            attempt + 1,
+                        )
+                        session_id = ""  # Clear session to avoid resuming broken state
+                        time.sleep(5)
+                        continue
                     break
 
                 # Check if error is retryable.
@@ -424,7 +512,11 @@ class Dispatcher:
                     response_text="",
                     elapsed=elapsed,
                     is_error=True,
-                    error_message="Request timed out. Please try again.",
+                    error_message=(
+                        "任務執行超時（已自動重試一次仍失敗）。"
+                        " 這通常表示任務過於複雜或網路暫時不穩定。"
+                        " 建議把任務拆成較小的步驟再重新嘗試。"
+                    ),
                     completion_items=completion_items,
                 )
                 self._task_queue.mark_failed(task)

@@ -84,3 +84,26 @@ uv run --directory {{opentree_home}} python -m scripts.tools.schedule_tool chain
 | channel | Slack channel ID（可省略，自動偵測） | 從 system prompt 取得 |
 | workspace | 工作區名稱 | `beta-room` |
 | thread-ts | 回覆目標 thread | `1739012345.123456` |
+
+## 工具執行排錯指引（BUG-06 修正）
+
+### 工具路徑失敗時的處理順序
+
+遇到 `ModuleNotFoundError: No module named 'scripts'` 或類似錯誤時，**不可直接判定工具不存在**：
+
+1. **確認執行方式**：
+   - 正確：`uv run --directory {{opentree_home}} python -m scripts.tools.schedule_tool ...`
+   - 若上述失敗，嘗試：`{{opentree_home}}/.venv/bin/python -m scripts.tools.schedule_tool ...`
+2. **搜尋工具位置**：用 `find {{opentree_home}} -name "schedule_tool.py" 2>/dev/null` 確認檔案存在
+3. **再嘗試不同模組路徑**（如 `opentree.tools.schedule_tool`）
+4. 若以上都失敗，才告知使用者工具不可用並提供替代方案
+
+### workspace 名稱
+
+`--workspace` 參數必須使用系統 prompt 中「目前頻道工作區」的實際值（如 `ai-room`、`beta-room`），不可使用 `default`。
+
+### 任務鏈中間結果路徑
+
+每個鏈式步驟的 prompt 必須明確指定中間結果路徑：
+- Step 1：`"搜尋後儲存到 /tmp/opentree/chains/{chain-name}/step1.md"`
+- Step 2：`"先讀取 /tmp/opentree/chains/{chain-name}/step1.md，再整理成報告…"`

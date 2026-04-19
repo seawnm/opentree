@@ -23,7 +23,7 @@
     ],
     "deny": []
   },
-  "prompt_hook": null,
+  "prompt_hook": "prompt_hook.py",
   "placeholders": {
     "opentree_home": "auto"
   }
