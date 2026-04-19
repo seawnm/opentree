@@ -5,6 +5,8 @@
 ## [Unreleased]
 
 ### Added
+- **Pending task shutdown notify** — On SIGTERM, queued tasks that haven't started are now notified via Slack (cancellation message + delete ack) instead of silently dropped. `TaskQueue.drain_pending()` atomically clears the queue; `Dispatcher.cancel_pending_tasks()` sends best-effort notifications. Design: [openspec/changes/20260419-pending-task-shutdown-notify/](openspec/changes/20260419-pending-task-shutdown-notify/)
+- **Tool visibility phase 2 (7 improvements)** — Full DOGI-parity for tool tracking display: (1) same-type ±1s grouping in timeline, (2) head/tail folding with "略過 N 個動作", (3) work-phase label from recent-5-tools majority vote, (4) task subtask per-item expand with duration, (5) in-progress duration "執行中 Xs", (6) thinking excerpt 💭 in completion summary, (7) decision point 💡 block in progress Block Kit. Design: [openspec/changes/20260419-tool-visibility/](openspec/changes/20260419-tool-visibility/)
 - **`--cmd-mode venv`** — new init mode that sets `BOT_CMD` to `<home>/.venv/bin/opentree` (instance-local virtualenv). Recommended for production: instances are fully isolated from source changes and only update when explicitly redeployed. `opentree init --cmd-mode venv` requires `<home>/.venv` to exist first.
 - **`scripts/deploy.sh`** — automated deployment script for venv-mode instances. Safely stops wrapper (SIGTERM → wait 60s → SIGKILL fallback), kills orphan processes, cleans stale PID files, runs `pip install --upgrade`, re-runs `opentree init --force`, and starts a new wrapper. Supports `--target <name>`, `--all`, `--skip-init`, `--dry-run`. Reads `instances.conf` registry at project root.
 - **`instances.conf`** — registry file mapping instance name → home path → bot name. Used by `scripts/deploy.sh` to locate and operate on instances.
@@ -20,8 +22,6 @@
 - **run.sh wrapper.pid + stop flag** — wrapper 寫入 `data/wrapper.pid` 供 `opentree stop` 定位；restart 迴圈前檢查 `.stop_requested` flag 防止重啟
 
 ### Changed
-- Progress timeline now shows WebSearch query keywords and Bash command previews instead of generic phase labels
-- Completion summary now includes representative query/command content for web search and bash tools
 - bot_walter deployment: switched from `uv run --directory` (source-coupled) to dedicated `.venv` with non-editable install for full instance isolation
 - `workspace/.codex` is now bound directly to `HOME/.codex` (`/home/codex/.codex`) inside bwrap. Codex uses `HOME/.codex` for **both** session state (`state_5.sqlite`, `sessions/`, rollout files) and auth (`auth.json`). Binding here ensures state persists across bwrap invocations so `codex exec resume` finds rollouts from previous turns. `auth.json` is overlaid RO on top via `--ro-bind-try` so the host credential is not writable inside the sandbox
 - `CodexProcess.run()` now pre-creates `{workspace}/.codex/` on host before launching bwrap to avoid "Can't mkdir: Read-only file system" for non-owner workspaces
