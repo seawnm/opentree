@@ -88,7 +88,7 @@ opentree init --bot-name "MyBot" --owner U12345 --cmd-mode bare
       rules/                  # Symlinked module rules
       settings.json           # Merged permissions from all modules
     CLAUDE.md                 # Generated system prompt (Claude Code; preserved across refresh)
-    AGENTS.md                 # Generated system prompt (Codex CLI; same content, plain markers)
+    AGENTS.md                 # Generated system prompt (Codex CLI; HTML-comment markers, runtime-rewritten)
   data/
     logs/                     # Daily rotated log files
     memory/                   # User memory files
@@ -364,7 +364,7 @@ Owners have **no Claude CLI permission elevation**. They are distinguished only 
 
 - **Slack commands**: `reset-bot`, `reset-bot-all`, `shutdown`, `restart`, `status`
 - **Config files**: `.env.local`, `.env.secrets`, `config/runner.json`
-- **CLAUDE.md / AGENTS.md**: Editable content outside the `OPENTREE:AUTO:BEGIN/END` markers
+- **CLAUDE.md / AGENTS.md**: Editable content outside the `<!-- OPENTREE:AUTO:BEGIN -->` / `<!-- OPENTREE:AUTO:END -->` markers
 
 ## Sandbox (bubblewrap)
 
@@ -407,6 +407,88 @@ opentree module refresh
 ```
 
 Without this step, the old unrestricted `Read`/`Write`/`Edit` entries remain in effect and the security fix is not activated.
+
+## Codex Rules Injection Architecture
+
+> **Critical for module authors.** This section explains the only correct way to deliver behavioral rules to Codex-based bots.
+
+### The Two Rule Paths
+
+OpenTree has two rule delivery mechanisms, and they serve **different runtimes**:
+
+| Mechanism | Written to | Read by | Effective for |
+|-----------|------------|---------|---------------|
+| `modules/*/rules/*.md` → `.claude/rules/` symlinks | `workspace/.claude/rules/` | **Claude CLI only** | Claude Code bots |
+| `modules/*/prompt_hook.py` → `assemble_system_prompt()` | `workspace/AGENTS.md` | **Codex CLI** | Codex-based bots |
+
+**Codex bots never read `.claude/rules/`.** They only read `workspace/AGENTS.md`, which is rewritten atomically before every Codex subprocess call by `codex_process._write_agents_md()`.
+
+### How AGENTS.md Gets Its Content
+
+```
+Each incoming message
+    │
+    ▼
+assemble_system_prompt()          ← core/prompt.py
+    ├── build_date_block()
+    ├── build_identity_block()    ← sets "権限等級：Owner / 一般使用者"
+    ├── build_channel_block()
+    └── collect_module_prompts()  ← calls each module's prompt_hook.py
+            ├── memory/prompt_hook.py
+            ├── personality/prompt_hook.py   ← behavioral rules live here
+            ├── scheduler/prompt_hook.py     ← scheduler rules live here
+            ├── slack/prompt_hook.py
+            └── requirement/prompt_hook.py
+    │
+    ▼
+system_prompt (assembled string)
+    │
+    ▼
+_write_agents_md()                ← codex_process.py
+    └── workspace/AGENTS.md       ← Codex reads this before every turn
+```
+
+### Writing Rules for Codex Bots
+
+**If you add behavioral rules to `rules/*.md` only, Codex bots will never see them.**
+
+Always add critical rules to a `prompt_hook.py` in your module:
+
+```python
+# modules/mymodule/prompt_hook.py
+def prompt_hook(context: dict) -> list[str]:
+    return [
+        "## My Module Rules",
+        "",
+        "**Rule 1**: ...",
+        "**Rule 2**: ...",
+    ]
+```
+
+Then register it in `opentree.json`:
+```json
+{ "prompt_hook": "prompt_hook.py" }
+```
+
+Static `rules/*.md` files are still useful for:
+- Claude Code bots (via `.claude/rules/` symlinks)
+- Human-readable documentation of the rules
+- Reference material that prompt_hooks can summarize
+
+### AGENTS.md Marker Format
+
+Both the init-time generator (`generate_agents_md()`) and the runtime writer (`_write_agents_md()`) use identical HTML-comment markers:
+
+```
+<!-- OPENTREE:AUTO:BEGIN -->
+... auto-generated content (rewritten on every message) ...
+<!-- OPENTREE:AUTO:END -->
+
+<!-- 以下為 Owner 自訂區塊，module 安裝/更新/refresh 不會覆蓋 -->
+... owner custom content (preserved across rewrites) ...
+```
+
+> **Why HTML comments, not `# markdown` headers?** Codex CLI parses AGENTS.md as markdown. Using `# OPENTREE:AUTO:BEGIN` as a marker would render as a visible heading inside the system prompt. HTML comment markers are invisible to the LLM while still being parseable by the Python string search in `_merge_with_preservation()`.
 
 ## Updating
 

@@ -22,7 +22,7 @@
 - [ ] **記憶雙寫問題（E2E Issue #1）** — Claude Write + memory_extractor 可能雙寫。需決定權責：關 extractor 或 deny Write(**/memory.md)（~45 min）
 - [x] **Owner deny bypass 研究（E2E Issue #4）** — `--dangerously-skip-permissions` 繞過 deny list。**✅ 2026-04-11 已修復**：改用 `--permission-mode dontAsk` 完全消除 bypass，詳見 [openspec/changes/20260411-owner-dontask-mode/](openspec/changes/20260411-owner-dontask-mode/)
 - [ ] **`_build_claude_args` cwd 參數清理** — Code Review MEDIUM：cwd 傳入函數但未使用，僅供 docstring 文檔化。考慮移除或保留（~10 min）
-- [ ] **AGENTS.md ClaudeProcess 描述補充**（P2 optional）— 在 ClaudeProcess 元件說明補上「post-20260411 全員使用 `--permission-mode dontAsk`」一句（~5 min）
+- [x] **AGENTS.md ClaudeProcess 描述補充** — ✅ 2026-04-19：補充到 DEPLOYMENT.md「Codex Rules Injection Architecture」章節，說明 ClaudeProcess → 全員 `--permission-mode dontAsk`，以及 Codex 的 prompt_hook 注入路徑
 
 ### 開發流程改善（來自 2026-04-08 反思 · 六大遺漏模式）
 
@@ -113,6 +113,7 @@
 
 | 日期 | 功能 | OpenSpec 路徑 |
 |------|------|---------------|
+| 2026-04-19 | Codex-first Rules Injection + AGENTS.md marker fix | `openspec/changes/20260419-codex-rules-injection/` |
 | 2026-04-11 | Owner dontAsk Mode（安全修復） | `openspec/changes/20260411-owner-dontask-mode/` |
 | 2026-04-08 | Permission Remediation | `openspec/changes/20260408-permission-remediation/` |
 | 2026-04-08 | Bot Reinstall Improvements | `openspec/changes/20260408-reinstall-improvements/` |
