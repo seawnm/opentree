@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-19
+
+> **Codex-first Architecture** — Codex CLI migration（bwrap sandbox）、AGENTS.md rules injection、8 COGI bug fixes、permission remediation 完工
+>
+> 設計決策：[openspec/changes/20260419-codex-rules-injection/](openspec/changes/20260419-codex-rules-injection/)、[openspec/changes/20260416-codex-migration/](openspec/changes/20260416-codex-migration/)、[openspec/changes/20260416-sandboxed-bash/](openspec/changes/20260416-sandboxed-bash/)
+
 ### Added
 - **Scheduler `prompt_hook.py`** — BUG-06 fix: injected scheduler tool error-recovery rules, `--workspace default` prohibition, and chain task intermediate-path conventions into Codex's `AGENTS.md` via a new `modules/scheduler/prompt_hook.py`. Previously these rules existed only in `schedule-tool.md` (Claude CLI path) and were invisible to Codex. Design: [openspec/changes/20260419-codex-rules-injection/](openspec/changes/20260419-codex-rules-injection/)
 - **Conversation rules injection** — BUG-04/05/07/08 fix: added `_build_conversation_rules()` to `personality/prompt_hook.py` to inject critical behavior rules (one question per reply, quantity constraints, file upload, technical feasibility negotiation, `<URL|text>` cleanup) into `AGENTS.md` via `system_prompt`. Previously these rules existed only in static `rules/*.md` symlinks and were invisible to Codex CLI bots.

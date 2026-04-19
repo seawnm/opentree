@@ -72,7 +72,8 @@
 
 ### 版本發布
 
-- [ ] **v0.5.1 發布** — 含 reinstall 改善（5 fixes）、pip install 解耦、instance decoupling、**permission remediation（9 fixes）**。[Unreleased] 已有 18+ items
+- [x] **v0.6.0 發布** — Codex-first 架構：Codex migration + bwrap sandbox + AGENTS.md rules injection + 8 COGI bug fixes + permission remediation 完工 — ✅ 2026-04-19
+- ~~[ ] **v0.5.1 發布**~~ — 已被 v0.6.0 取代（含原規劃的 reinstall 改善、pip install 解耦、instance decoupling、permission remediation）
 - ~~[ ] **v0.3.1 發布**~~ — 已被 v0.5.0 取代
 
 ### 測試驗證
