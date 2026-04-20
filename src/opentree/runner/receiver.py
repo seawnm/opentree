@@ -49,7 +49,11 @@ class Receiver:
         dispatch_callback: Called with a :class:`Task` for each accepted event.
         heartbeat_path: Optional path to write a heartbeat timestamp after each
             processed event. Parent directories are created automatically.
+        shutdown_event: Optional threading.Event used to stop the probe loop.
+            If not provided, a new Event is created internally.
     """
+
+    PROBE_INTERVAL: int = 15
 
     def __init__(
         self,
@@ -58,6 +62,7 @@ class Receiver:
         bot_user_id: str,
         dispatch_callback: Callable,  # Callable[[Task], None]
         heartbeat_path: Optional[Path] = None,
+        shutdown_event: Optional[threading.Event] = None,
     ) -> None:
         _check_slack_bolt()
         self._bot_token = bot_token
@@ -65,6 +70,7 @@ class Receiver:
         self._bot_user_id = bot_user_id
         self._dispatch = dispatch_callback
         self._heartbeat_path = heartbeat_path
+        self._shutdown_event = shutdown_event if shutdown_event is not None else threading.Event()
 
         self._processed_ts: set[str] = set()
         self._processed_lock = threading.Lock()
@@ -78,21 +84,36 @@ class Receiver:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Initialize bolt App and start Socket Mode handler (blocking).
+        """Initialize bolt App, connect Socket Mode handler, then run liveness probe loop.
 
-        Creates a :class:`slack_bolt.App`, registers event handlers, then
-        starts a :class:`SocketModeHandler` — which blocks until stopped.
+        Uses handler.connect() (non-blocking) instead of handler.start() (blocking),
+        then enters a probe loop that writes heartbeat every PROBE_INTERVAL seconds.
+        The loop exits when shutdown_event is set.
         """
         self._app = App(token=self._bot_token)
         self._register_handlers()
         self._handler = SocketModeHandler(self._app, self._app_token)
-        self._handler.start()
+        self._handler.connect()
+        logger.info("Receiver connected (Socket Mode)")
+
+        # Write initial heartbeat so watchdog sees a fresh timestamp
+        # before the first PROBE_INTERVAL elapses.
+        self._write_heartbeat()
+
+        while not self._shutdown_event.wait(timeout=self.PROBE_INTERVAL):
+            self._liveness_probe()
+
+        logger.info("Receiver probe loop exiting (shutdown_event set)")
 
     def stop(self) -> None:
         """Stop the Socket Mode handler gracefully."""
         if self._handler is not None:
             self._handler.close()
             self._handler = None
+
+    def _liveness_probe(self) -> None:
+        """Write heartbeat. Called every PROBE_INTERVAL seconds from the probe loop."""
+        self._write_heartbeat()
 
     # ------------------------------------------------------------------
     # Private: event registration

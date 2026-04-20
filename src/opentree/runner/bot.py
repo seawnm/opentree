@@ -145,6 +145,7 @@ class Bot:
             bot_user_id=bot_user_id,
             dispatch_callback=self._dispatcher.dispatch,
             heartbeat_path=self._heartbeat_path,
+            shutdown_event=self._shutdown_event,
         )
 
         self._start_time = time.time()

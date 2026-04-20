@@ -9,10 +9,12 @@ Tests cover:
   - _handle_app_mention: dispatches new event, skips duplicate
   - _handle_message: ignores bot messages, ignores empty text, dispatches DM
   - stop: calls handler close
+  - liveness probe loop: PROBE_INTERVAL constant, shutdown_event wiring, probe exits
 """
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
@@ -39,6 +41,7 @@ def make_receiver(
     dispatch_callback=None,
     heartbeat_path=None,
     bot_user_id="UBOT123",
+    shutdown_event=None,
 ) -> Receiver:
     """Create a Receiver with all Slack dependencies mocked."""
     if dispatch_callback is None:
@@ -52,6 +55,7 @@ def make_receiver(
                 bot_user_id=bot_user_id,
                 dispatch_callback=dispatch_callback,
                 heartbeat_path=heartbeat_path,
+                shutdown_event=shutdown_event,
             )
             return receiver
 
@@ -667,9 +671,12 @@ class TestStartStop:
         r.stop()  # should not raise
 
     def test_start_creates_app_and_handler(self):
-        """start() should instantiate App, register handlers, and call handler.start()."""
+        """start() should instantiate App, register handlers, and call handler.connect()."""
         mock_app_instance = MagicMock()
         mock_handler_instance = MagicMock()
+        # Pre-set shutdown_event so probe loop exits immediately
+        shutdown_event = threading.Event()
+        shutdown_event.set()
 
         with patch("opentree.runner.receiver.App", return_value=mock_app_instance) as mock_app_cls:
             with patch(
@@ -682,15 +689,19 @@ class TestStartStop:
                         app_token="xapp-fake",
                         bot_user_id="UBOT",
                         dispatch_callback=MagicMock(),
+                        shutdown_event=shutdown_event,
                     )
                     r.start()
 
         mock_handler_cls.assert_called_once_with(mock_app_instance, "xapp-fake")
-        mock_handler_instance.start.assert_called_once()
+        mock_handler_instance.connect.assert_called_once()
 
     def test_start_registers_event_handlers(self):
         """start() must register app_mention and message handlers on the bolt App."""
         mock_app_instance = MagicMock()
+        # Pre-set shutdown_event so probe loop exits immediately
+        shutdown_event = threading.Event()
+        shutdown_event.set()
 
         with patch("opentree.runner.receiver.App", return_value=mock_app_instance):
             with patch("opentree.runner.receiver.SocketModeHandler", MagicMock()):
@@ -700,6 +711,7 @@ class TestStartStop:
                         app_token="xapp-fake",
                         bot_user_id="UBOT",
                         dispatch_callback=MagicMock(),
+                        shutdown_event=shutdown_event,
                     )
                     r.start()
 
@@ -708,3 +720,56 @@ class TestStartStop:
         event_names = [c.args[0] for c in mock_app_instance.event.call_args_list]
         assert "app_mention" in event_names
         assert "message" in event_names
+
+
+# ---------------------------------------------------------------------------
+# Liveness probe loop
+# ---------------------------------------------------------------------------
+
+class TestLivenessProbeLoop:
+    def test_probe_interval_class_constant(self):
+        """PROBE_INTERVAL should be 15 seconds."""
+        assert Receiver.PROBE_INTERVAL == 15
+
+    def test_shutdown_event_auto_created(self):
+        """When no shutdown_event provided, Receiver creates one internally."""
+        r = make_receiver()
+        assert isinstance(r._shutdown_event, threading.Event)
+
+    def test_shutdown_event_used_when_provided(self):
+        """When a shutdown_event is provided, it is stored as-is."""
+        event = threading.Event()
+        r = make_receiver(shutdown_event=event)
+        assert r._shutdown_event is event
+
+    def test_probe_loop_exits_immediately_when_shutdown_set(self):
+        """start() must return promptly when shutdown_event is pre-set."""
+        shutdown_event = threading.Event()
+        shutdown_event.set()
+
+        mock_app_instance = MagicMock()
+        mock_handler_instance = MagicMock()
+
+        with patch("opentree.runner.receiver.App", return_value=mock_app_instance):
+            with patch(
+                "opentree.runner.receiver.SocketModeHandler",
+                return_value=mock_handler_instance,
+            ):
+                with patch("opentree.runner.receiver._check_slack_bolt"):
+                    r = Receiver(
+                        bot_token="xoxb-fake",
+                        app_token="xapp-fake",
+                        bot_user_id="UBOT",
+                        dispatch_callback=MagicMock(),
+                        shutdown_event=shutdown_event,
+                    )
+                    r.start()  # should return without blocking
+
+        mock_handler_instance.connect.assert_called_once()
+
+    def test_liveness_probe_calls_write_heartbeat(self):
+        """_liveness_probe() must call _write_heartbeat exactly once."""
+        r = make_receiver()
+        with patch.object(r, "_write_heartbeat") as mock_write:
+            r._liveness_probe()
+            mock_write.assert_called_once()
