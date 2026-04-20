@@ -277,6 +277,10 @@ The generated `bin/run.sh` is a Bash wrapper that keeps the bot alive and health
 
 ### Watchdog tuning
 
+The watchdog expects the bot to keep `data/bot.heartbeat` fresh. Before v0.6.1, `receiver.py` only wrote heartbeat from `_handle_message()`, so a long 3-5 minute Codex task with no incoming Slack traffic could leave the heartbeat stale even though the bot was still healthy. `run.sh` would then see `WATCHDOG_TIMEOUT=120` exceeded and kill the bot.
+
+This was fixed in v0.6.1 with a liveness probe loop in `Receiver.start()`: the receiver now uses `handler.connect()` (non-blocking), writes an initial heartbeat, then runs `shutdown_event.wait(timeout=15)` in a loop and calls `_liveness_probe()` every 15 seconds. Heartbeats are now independent of Slack traffic, which gives an 8x safety margin against the 120-second watchdog timeout.
+
 Edit the variables at the top of `bin/run.sh`:
 
 ```bash
@@ -608,8 +612,21 @@ Optional JSON file for tuning bot behavior. All fields are optional — missing 
 
 The watchdog kills the bot if no heartbeat is written within 120 seconds. Possible causes:
 
-- Bot is stuck on a long Claude CLI call -- increase `WATCHDOG_TIMEOUT` in `bin/run.sh`
+- Running a version older than v0.6.1 during a long Codex task -- before the liveness probe fix, heartbeat was only refreshed when Slack messages arrived, so a 3-5 minute task with no incoming traffic could trigger the watchdog
+- Bot is stuck or deadlocked in Python code
+- Slack Socket Mode disconnected and the receiver probe loop is no longer running
+- Disk full or permission error prevented writing `data/bot.heartbeat`
 - Bot startup is slow -- increase `WATCHDOG_INIT_DELAY`
+
+### Bot killed mid-task (watchdog SIGKILL)
+
+**Symptom:** Bot gets SIGKILL (exit code 137) during long Codex tasks. Logs show `WATCHDOG: Heartbeat stale (>120s)`.
+
+**Root cause (fixed in v0.6.1):** Prior to the liveness probe fix, heartbeat was only updated when Slack messages arrived. Long tasks with no incoming messages would exhaust the 120s watchdog timeout.
+
+**Status:** Fixed. `receiver.py` now writes heartbeat every 15s in the probe loop.
+
+**If still occurring:** Check that your instance is running the latest version (`opentree --version`). If using venv mode, redeploy with `scripts/deploy.sh`.
 
 ### .env not loading
 
