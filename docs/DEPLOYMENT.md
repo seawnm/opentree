@@ -614,7 +614,7 @@ The watchdog kills the bot if no heartbeat is written within 120 seconds. Possib
 
 - Running a version older than v0.6.1 during a long Codex task -- before the liveness probe fix, heartbeat was only refreshed when Slack messages arrived, so a 3-5 minute task with no incoming traffic could trigger the watchdog
 - Bot is stuck or deadlocked in Python code
-- Slack Socket Mode disconnected and the receiver probe loop is no longer running
+- Receiver thread crashed or failed to start (check logs for exceptions in `opentree.runner.receiver`)
 - Disk full or permission error prevented writing `data/bot.heartbeat`
 - Bot startup is slow -- increase `WATCHDOG_INIT_DELAY`
 
@@ -626,7 +626,7 @@ The watchdog kills the bot if no heartbeat is written within 120 seconds. Possib
 
 **Status:** Fixed. `receiver.py` now writes heartbeat every 15s in the probe loop.
 
-**If still occurring:** Check that your instance is running the latest version (`opentree --version`). If using venv mode, redeploy with `scripts/deploy.sh`.
+**If still occurring:** Check that your instance is running the latest version (`python -c "import opentree; print(opentree.__version__)"`). If using venv mode, redeploy with `scripts/deploy.sh`.
 
 ### .env not loading
 

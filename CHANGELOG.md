@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-04-20
+
 ### Fixed
 - **Receiver liveness probe loop** — Fixed watchdog killing bot during long Codex tasks. `Receiver.start()` now calls `handler.connect()` (non-blocking) and runs a probe loop (`shutdown_event.wait(timeout=15)`) that writes heartbeat every 15 seconds, independent of Slack message traffic. Previously, heartbeat was only written in `_handle_message()` — during a 3-5 minute Codex task with no incoming messages, the heartbeat went stale and `WATCHDOG_TIMEOUT=120s` triggered SIGKILL. The fix gives an 8× safety margin (15s probe vs 120s timeout). `Receiver.__init__` now accepts `shutdown_event: Optional[threading.Event]` for clean loop exit on shutdown. Design: [openspec/changes/20260420-receiver-liveness-probe/](openspec/changes/20260420-receiver-liveness-probe/)
 
