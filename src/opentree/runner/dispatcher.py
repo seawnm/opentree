@@ -495,10 +495,39 @@ class Dispatcher:
             if result.thinking_text:
                 tracker.add_thinking_text(result.thinking_text)
             tracker.finish()
-            if result.is_error or result.is_timeout:
+            # Treat empty response (without error flag) as an effective failure
+            # for circuit breaker purposes — the user received no reply.
+            is_effective_failure = (
+                result.is_error
+                or result.is_timeout
+                or (not result.response_text and not result.is_error)
+            )
+            if is_effective_failure:
                 self._circuit_breaker.record_failure()
+                if not result.is_error and not result.is_timeout:
+                    logger.warning(
+                        "Task %s: empty response without error flag — "
+                        "recording as circuit breaker failure | "
+                        "exit_code=%s session_id=%s",
+                        task.task_id,
+                        result.exit_code,
+                        result.session_id or "(none)",
+                    )
             else:
                 self._circuit_breaker.record_success()
+
+            logger.info(
+                "Task %s result | thread_ts=%s is_error=%s is_timeout=%s "
+                "exit_code=%s response_len=%d session_id=%s elapsed=%.1fs",
+                task.task_id,
+                task.thread_ts,
+                result.is_error,
+                result.is_timeout,
+                result.exit_code,
+                len(result.response_text or ""),
+                result.session_id or "(none)",
+                result.elapsed_seconds,
+            )
 
             completion_items = tracker.build_completion_summary()
 
@@ -519,7 +548,8 @@ class Dispatcher:
                     ),
                     completion_items=completion_items,
                 )
-                self._task_queue.mark_failed(task)
+                promoted = self._task_queue.mark_failed(task)
+                self._spawn_promoted(promoted)
                 return
             reporter.complete(
                 response_text=result.response_text or "",
@@ -530,7 +560,8 @@ class Dispatcher:
             )
 
             if result.is_error:
-                self._task_queue.mark_failed(task)
+                promoted = self._task_queue.mark_failed(task)
+                self._spawn_promoted(promoted)
                 return
 
             # Step 11: persist session_id.

@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-04-21
+
+### Fixed
+- **Silent failure — no result event treated as success** (`codex_process.py`) — When Codex CLI exited without emitting a `turn.completed` event (`has_result_event=False`), the parser defaulted to `is_error=False`, causing the entire pipeline to silently treat it as a successful empty reply. Now sets `is_error=True` with a descriptive error message in this case. Design: [openspec/changes/20260421-silent-failure-fix/](openspec/changes/20260421-silent-failure-fix/)
+- **Silent failure — empty response delivered as success** (`progress.py`) — `ProgressReporter.complete()` silently returned without sending any Slack message when `response_text` was empty and `is_error=False`, leaving users with a "✅ 處理完成" progress update but no actual reply. Now sends a fallback warning: "⚠️ 處理完成但未產生回覆。這可能是暫時性問題，請重新嘗試。" Design: [openspec/changes/20260421-silent-failure-fix/](openspec/changes/20260421-silent-failure-fix/)
+- **Circuit breaker counts empty response as failure** (`dispatcher.py`) — `record_success()` was called even when response was empty without an error flag. Introduced `is_effective_failure` check: empty response (no error, no timeout, but no text) now calls `record_failure()`. Design: [openspec/changes/20260421-silent-failure-fix/](openspec/changes/20260421-silent-failure-fix/)
+- **Promoted tasks stuck in queue after timeout/error** (`dispatcher.py`) — Both timeout and error paths called `self._task_queue.mark_failed(task)` but discarded the return value, never calling `_spawn_promoted(promoted)`. Promoted tasks were stuck waiting 30 minutes for the queue watchdog instead of immediately resuming. Design: [openspec/changes/20260421-silent-failure-fix/](openspec/changes/20260421-silent-failure-fix/)
+
+### Added
+- **Codex CLI finish observability log** (`codex_process.py`) — Added structured INFO log after every Codex execution: `"Codex CLI finished | pid=... exit_code=... elapsed=...s has_result_event=... response_len=... is_error=... session_id=... input_tokens=... output_tokens=... timed_out=..."`. Enables post-mortem diagnosis of silent failures. Design: [openspec/changes/20260421-silent-failure-fix/](openspec/changes/20260421-silent-failure-fix/)
+
 ## [0.6.1] - 2026-04-20
 
 ### Fixed

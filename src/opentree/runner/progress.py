@@ -257,6 +257,19 @@ class ProgressReporter:
             return
 
         if not response_text.strip():
+            logger.warning(
+                "[ProgressReporter.complete] Empty response_text with "
+                "is_error=False — sending fallback error to user | "
+                "channel=%s thread_ts=%s elapsed=%.1f",
+                self._channel,
+                self._thread_ts,
+                elapsed,
+            )
+            self._slack.send_message(
+                channel=self._channel,
+                text="⚠️ 處理完成但未產生回覆。這可能是暫時性問題，請重新嘗試。",
+                thread_ts=self._thread_ts,
+            )
             return
 
         reply_text = f"{response_text}\n\n_✅ 完成 (耗時 {_format_duration(elapsed)})_"

@@ -309,6 +309,15 @@ class CodexProcess:
                 exit_code,
                 self._timed_out,
             )
+            # Treat missing result event as error — Codex exited without
+            # completing the turn, so there is no response to deliver.
+            if not self._parser.state.is_error:
+                self._parser.state.is_error = True
+                if not self._parser.state.error_message:
+                    self._parser.state.error_message = (
+                        f"Codex CLI exited without completing the turn "
+                        f"(exit_code={exit_code}, pid={pid})."
+                    )
         elif (
             self._parser.state.input_tokens == 0
             and self._parser.state.output_tokens == 0
@@ -320,6 +329,37 @@ class CodexProcess:
                 exit_code,
             )
 
+        # Treat non-zero exit code as error even if parser didn't flag it.
+        if exit_code != 0 and not self._parser.state.is_error:
+            logger.warning(
+                "Codex CLI exited with non-zero code %d but parser "
+                "did not flag error (pid=%s, has_result=%s, response_len=%d)",
+                exit_code,
+                pid,
+                self._parser.state.has_result_event,
+                len(self._parser.state.response_text),
+            )
+            self._parser.state.is_error = True
+            if not self._parser.state.error_message:
+                self._parser.state.error_message = (
+                    f"Codex CLI exited with code {exit_code}."
+                )
+
+        logger.info(
+            "Codex CLI finished | pid=%s exit_code=%s elapsed=%.1fs "
+            "has_result_event=%s response_len=%d is_error=%s "
+            "session_id=%s input_tokens=%d output_tokens=%d timed_out=%s",
+            pid,
+            exit_code,
+            elapsed,
+            self._parser.state.has_result_event,
+            len(self._parser.state.response_text),
+            self._parser.state.is_error,
+            self._parser.state.session_id or "(none)",
+            self._parser.state.input_tokens,
+            self._parser.state.output_tokens,
+            self._timed_out,
+        )
         result_dict = self._parser.get_result()
 
         return ClaudeResult(
