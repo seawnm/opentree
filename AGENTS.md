@@ -1,8 +1,8 @@
-<!-- Generated: 2026-04-07 | Python files: 44 | Lines: ~8,600 | Token estimate: ~1,000 -->
+<!-- Generated: 2026-04-24 | Python files: 48 | Lines: ~10,947 | Token estimate: ~1,200 -->
 
 # OpenTree
 
-Modular Claude Code CLI wrapper — one user, one bot, zero shared state. v0.5.0
+Modular Claude Code CLI wrapper — one user, one bot, zero shared state. v0.6.2
 
 ## Subsystems
 
@@ -13,7 +13,7 @@ Modular Claude Code CLI wrapper — one user, one bot, zero shared state. v0.5.0
 | **Generator** | `src/opentree/generator/` | Produce CLAUDE.md index, settings.json, .claude/rules/ symlinks | symlinks.py (382), settings.py (234), claude_md.py (276) | ~893 |
 | **Manifest** | `src/opentree/manifest/` | Validate opentree.json against JSON Schema + semantic rules | validator.py (432), models.py (54), errors.py (48) | ~553 |
 | **Registry** | `src/opentree/registry/` | Track installed modules, file locking, atomic persistence | registry.py (303), models.py (46) | ~355 |
-| **Runner** | `src/opentree/runner/` | Slack bot runtime (largest subsystem) | dispatcher.py (842), bot.py (380), claude_process.py (356), reset.py (210), memory_schema.py (186) | ~4,867 |
+| **Runner** | `src/opentree/runner/` | Slack bot runtime (largest subsystem) | dispatcher.py (1025), codex_process.py (449), bot.py (421), claude_process.py (379), progress.py (325), codex_stream_parser.py (325) | ~6,493 |
 | **Schema** | `src/opentree/schema/` | JSON Schema for opentree.json manifest | opentree.schema.json | — |
 | **Templates** | `src/opentree/templates/` | run.sh wrapper (auto-restart, watchdog, crash loop protection) | run.sh (303) | ~303 |
 
@@ -28,15 +28,19 @@ Modular Claude Code CLI wrapper — one user, one bot, zero shared state. v0.5.0
       │   → reset-bot → reset.reset_bot() + SessionManager.clear_all() → restart
       │   → reset-bot-all → reset.reset_bot_all() → restart
       └─ Normal task:
-          → ClaudeProcess (subprocess, stream parsing)
+          → CodexProcess / ClaudeProcess (subprocess, stream parsing)
             → ProgressReporter (phase tracking, Slack updates)
           ← ClaudeResult
+            [is_effective_failure check: is_error | is_timeout | empty response]
+            ├─ failure → CircuitBreaker.record_failure() + mark_failed() → _spawn_promoted()
+            └─ success → CircuitBreaker.record_success()
           → MemoryExtractor (section routing → Pinned/Core/Episodes/Active)
         ← SlackAPI.post_thread_reply()
 
 Fault tolerance: CircuitBreaker (5 failures → OPEN → 30s → HALF_OPEN)
                  RetryConfig (exponential backoff, transient vs permanent)
                  run.sh watchdog (120s heartbeat timeout → SIGTERM → 40s → SIGKILL)
+                 ProgressReporter fallback (empty response → ⚠️ warning to user)
 ```
 
 ## Runner Components
@@ -45,11 +49,14 @@ Fault tolerance: CircuitBreaker (5 failures → OPEN → 30s → HALF_OPEN)
 |-----------|------|------|
 | Bot | bot.py | Lifecycle: startup → receiver.start() → shutdown. Three-layer .env loading (_parse_env_file, _validate_not_placeholder): .env.defaults → .env.local → .env.secrets, with legacy .env fallback |
 | Receiver | receiver.py | Socket Mode listener, layer-1 dedup (10K cap) |
-| Dispatcher | dispatcher.py | Message → prompt → Claude → result orchestration. Handles reset-bot/reset-bot-all commands. Owner check via is_owner (RunnerConfig.admin_users). Step 11b: memory extraction gated by memory_extraction_enabled |
+| Dispatcher | dispatcher.py | Message → prompt → Claude/Codex → result orchestration. `is_effective_failure` covers error/timeout/empty-response for circuit breaker. `mark_failed()` return value (promoted tasks) fed to `_spawn_promoted()`. Handles reset-bot/reset-bot-all commands. Step 11b: memory extraction gated by memory_extraction_enabled |
 | SlackAPI | slack_api.py | Slack SDK wrapper (post, upload, react, update) |
 | ClaudeProcess | claude_process.py | Spawn claude CLI subprocess, stream stdout |
-| StreamParser | stream_parser.py | Parse phases: THINKING → TOOL_CALL → RESPONSE |
-| Progress | progress.py | Track & report task progress to Slack |
+| CodexProcess | codex_process.py | Spawn Codex CLI subprocess, stream JSON events. Treats missing result event (`has_result_event=False`) and non-zero exit code as `is_error=True`. Emits structured finish log (pid, exit_code, elapsed, tokens, timed_out) for post-mortem diagnosis. Session-resume via `--session` flag |
+| CodexStreamParser | codex_stream_parser.py | Parse Codex JSON event stream: session_started, turn_started, message, tool_call, turn_completed, error. Tracks `has_result_event`, `session_id`, token counts |
+| SandboxLauncher | sandbox_launcher.py | bwrap sandbox wrapper for Codex CLI (read-only bind mounts, network isolation, tmpfs /tmp) |
+| StreamParser | stream_parser.py | Parse Claude CLI phases: THINKING → TOOL_CALL → RESPONSE |
+| Progress | progress.py | Track & report task progress to Slack. Sends ⚠️ fallback warning when `response_text` is empty and `is_error=False`, preventing silent no-reply |
 | TaskQueue | task_queue.py | Priority heap (HIGH=owner, NORMAL=user), worker threads |
 | Session | session.py | Per-user memory persistence across threads |
 | CircuitBreaker | circuit_breaker.py | CLOSED → OPEN (5 fails) → HALF_OPEN (30s) |
@@ -136,7 +143,7 @@ Registry (standalone, fcntl for locking)
 
 ## Tests
 
-- **~1,250 tests** across `tests/isolation/` (unit) and `tests/e2e/` (13 E2E tests), **89% coverage**
+- **~1,543 tests** across `tests/isolation/` (unit) and `tests/e2e/` (13 E2E tests), **89% coverage**
 - E2E requires running bot instance (Bot_Walter)
 - Markers: `@pytest.mark.e2e`, `@pytest.mark.slow` (>60s), `@pytest.mark.destructive`
 - Run: `pytest tests/` or `pytest tests/ --cov=opentree`
@@ -164,7 +171,7 @@ Registry (standalone, fcntl for locking)
 ## References
 
 - [README.md](README.md) — full architecture, quick start, module list
-- [CHANGELOG.md](CHANGELOG.md) — version history (0.1.0 → 0.5.0)
+- [CHANGELOG.md](CHANGELOG.md) — version history (0.1.0 → 0.6.2)
 - [openspec/changes/](openspec/changes/) — design decisions per feature
 - [openspec/changes/20260329-initial-architecture/](openspec/changes/20260329-initial-architecture/) — foundational architecture decisions
 

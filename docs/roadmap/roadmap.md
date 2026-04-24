@@ -1,6 +1,6 @@
 # OpenTree Roadmap
 
-> 最後更新：2026-04-13
+> 最後更新：2026-04-24
 
 ---
 
@@ -72,6 +72,8 @@
 
 ### 版本發布
 
+- [x] **v0.6.2 發布** — Silent failure fix：4 個無聲失敗路徑修補（no result event / empty response / circuit breaker / promoted tasks stuck）+ Codex finish 可觀測性 log — ✅ 2026-04-21
+- [x] **v0.6.1 發布** — Receiver liveness probe loop：修復 Codex 長任務期間 heartbeat stale 導致 watchdog SIGKILL — ✅ 2026-04-20
 - [x] **v0.6.0 發布** — Codex-first 架構：Codex migration + bwrap sandbox + AGENTS.md rules injection + 8 COGI bug fixes + permission remediation 完工 — ✅ 2026-04-19
 - ~~[ ] **v0.5.1 發布**~~ — 已被 v0.6.0 取代（含原規劃的 reinstall 改善、pip install 解耦、instance decoupling、permission remediation）
 - ~~[ ] **v0.3.1 發布**~~ — 已被 v0.5.0 取代
@@ -114,6 +116,8 @@
 
 | 日期 | 功能 | OpenSpec 路徑 |
 |------|------|---------------|
+| 2026-04-21 | Silent Failure Fix（4 路徑修補 + finish log） | `openspec/changes/20260421-silent-failure-fix/` |
+| 2026-04-20 | Slack Task Visibility Parity（進行中） | `openspec/changes/20260420-slack-visibility-parity/` |
 | 2026-04-19 | Codex-first Rules Injection + AGENTS.md marker fix | `openspec/changes/20260419-codex-rules-injection/` |
 | 2026-04-11 | Owner dontAsk Mode（安全修復） | `openspec/changes/20260411-owner-dontask-mode/` |
 | 2026-04-08 | Permission Remediation | `openspec/changes/20260408-permission-remediation/` |
